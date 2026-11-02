@@ -1,9 +1,5 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { COMMON, PARS, VERT_MAIN, BAKE_VERT, BAKE_FRAG } from './shader.js';
 import { SPECIES, FINISHES, FILLS, LIGHTS } from './materials.js';
 
@@ -55,25 +51,13 @@ if (TM === 'punchy') {
     return c; }`).replace('vec3 CustomToneMapping', '#define STUDIO_SAT 1.08\n#define STUDIO_S 0.3\nvec3 CustomToneMapping');
 }
 
-// Bloom high-pass that only lets emissive light through: the board shaders write the emissive share of each pixel
-// into alpha as (1 - share), so glossy highlights on the wood or resin never bloom, only the glowing pigment does.
-const EMISSIVE_HIGHPASS = /* glsl */`
-uniform sampler2D tDiffuse; uniform vec3 defaultColor; uniform float defaultOpacity; uniform float luminosityThreshold; uniform float smoothWidth;
-varying vec2 vUv;
-void main() {
-  vec4 t = texture2D( tDiffuse, vUv );
-  vec3 e = t.rgb * clamp( 1.0 - t.a, 0.0, 1.0 );
-  float v = dot( e, vec3( 0.299, 0.587, 0.114 ) );
-  gl_FragColor = mix( vec4( defaultColor, defaultOpacity ), vec4( e, 1.0 ), smoothstep( luminosityThreshold, luminosityThreshold + smoothWidth, v ) );
-}`;
-
 // How it renders (see docs/perf-notes.md):
 //  * the board is a flat grid built once per size/detail; the GPU displaces it from the depth texture,
 //    so a new trace or material only uploads a texture or changes uniforms (no mesh rebuilds)
 //  * frames are drawn only when something changed; while orbiting or dragging a light slider it draws a
 //    draft (pixel ratio <= 1, adaptive, half-density grid), then one full-quality frame once it settles
 //  * the shadow map is redrawn only when the carve, fill or light changes, not every frame
-//  * bloom runs only for the glow resins
+//  * the turntable (Sway) runs on draft frames, like an orbit: it is motion, not a still
 export class Viewer {
   constructor(container) {
     this.el = container;
@@ -105,11 +89,10 @@ export class Viewer {
     this.fill = new THREE.DirectionalLight(0xc8d8ff, 0.25); this.scene.add(this.fill);
     this.keyDirW = new THREE.Vector3(0, 1, 0);
     this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', sanded: true, fillLevel: 0, flood: false, menisc: 0.3,
-                   light: 'studio', az: 220, el: 42, exposure: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
+                   light: 'studio', az: 220, el: 42, exposure: 1.0, bright: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
     this.uniforms = this.makeUniforms();
     this.makeBackdrop();
     this.mats = {}; this.depthMats = {}; this.grids = new Map();
-    this.composer = null;
     this.quality = 'full';
     this.initBake();
     this.makeBoard();
@@ -129,6 +112,7 @@ export class Viewer {
       if (this.state.sway && this.group.visible) {
         // Forge's Sway: the board turns slowly to and fro about the vertical axis; camera, lights and floor stay put
         this.spin.rotation.y = Math.sin((now - t0) / 2600) * 0.38; this.shadowDirty = true; moved = true;
+        if (this.quality !== 'draft') this.setQuality('draft');   // a moving board: draft grid + adaptive pixel ratio
       }
       if (moved) this.lastMove = now;
       if (this.quality === 'draft') {
@@ -155,11 +139,11 @@ export class Viewer {
       uDist: { value: this.blankDist() }, uBoardRect: { value: new THREE.Vector4(0, 0, 300, 300) },
       uWood: { value: Array.from({ length: 14 }, () => new THREE.Vector4()) }, uFinish: { value: new THREE.Vector4(1, 1, 0, 0) },
       uFinishCoatRough: { value: 0.3 }, uFillType: { value: 0 }, uFillColor: { value: new THREE.Color() },
-      uFillAbsorb: { value: new THREE.Vector3(1, 1, 1) }, uFillScatter: { value: new THREE.Color() }, uGlowColor: { value: new THREE.Color() },
+      uFillAbsorb: { value: new THREE.Vector3(1, 1, 1) }, uFillScatter: { value: new THREE.Color() },
       uBakeA: { value: null }, uBakeB: { value: null }, uBakeRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uAO: { value: blankAO }, uAOs: { value: 0.6 }, uPlugRot: { value: 1.35 }, uFillF0: { value: new THREE.Color() },
       uFillVein: { value: 0 }, uFillVeinCol: { value: new THREE.Color() }, uKeyShare: { value: 0.6 }, uGlueCol: { value: new THREE.Color('#3a2a1c') },
-      uGlow: { value: 0 }, uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() }, uCamBoard: { value: new THREE.Vector3() }, uBoardRot: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) },
+      uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() }, uCamBoard: { value: new THREE.Vector3() }, uBoardRot: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) },
     };
     return u;
   }
@@ -210,15 +194,12 @@ export class Viewer {
      if (cm > 0.35) clearcoatSpecularIndirect *= (0.35 + 0.4 * (1.0 - exp(-(cm - 0.35) / 0.4))) / cm; }
    #endif
  }`);
-      // alpha = 1 - emissive share of the pixel: the bloom high-pass reads it (the canvas itself has no alpha)
       f = f.replace('#include <opaque_fragment>', `
  // metals: compress only the brightest channel's overshoot (hue kept), so a gold highlight stays gold through the tone
  // map instead of washing to white
  if (sMetal > 0.5) { float mx = max(max(outgoingLight.r, outgoingLight.g), outgoingLight.b);
    if (mx > 0.55) outgoingLight *= (0.55 + 0.45 * (1.0 - exp(-(mx - 0.55) / 0.45))) / mx; }
- #include <opaque_fragment>
- { float eL = dot(totalEmissiveRadiance, vec3(0.2126, 0.7152, 0.0722)), oL = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
-   gl_FragColor.a = 1.0 - clamp(eL / max(oL, 1e-4), 0.0, 1.0); }`);
+ #include <opaque_fragment>`);
       sh.fragmentShader = f;
     };
     m.customProgramCacheKey = () => 'carve' + part;
@@ -256,10 +237,10 @@ export class Viewer {
     this.bakeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.bakeKeys = ['', '']; this.bakeJobs = [null, null];
     // finished full-res bakes are kept per key (species / insert / carve), newest last, so switching back is instant;
-    // the count is capped by a GPU memory budget (~280 MB of 8-bit RGBA + mips)
+    // the count is capped by a GPU memory budget (~150 MB of 8-bit RGBA + mips: two or three 4K bakes, kind to laptop GPUs)
     this.mkBakeRT = mk; this.woodCache = new Map(); this.bakeFree = []; this.bakeHits = 0;
   }
-  woodBudget(w, h) { return Math.max(2, Math.floor(280e6 / (w * h * 4 * 1.34))); }
+  woodBudget(w, h) { return Math.max(2, Math.floor(150e6 / (w * h * 4 * 1.34))); }
   releaseBakeRT(rt) {   // an RT no slot shows any more: keep it if it holds a finished bake, else recycle it
     if (!rt || this.bakeRT.includes(rt) || [...this.woodCache.values()].includes(rt)) return;
     if (this.bakeFree.length < 1) this.bakeFree.push(rt); else rt.dispose();
@@ -545,12 +526,10 @@ export class Viewer {
     U.uFillScatter.value.set(P.scatter || '#000000');
     U.uFillF0.value.set(P.f0 || P.color);
     U.uFillVein.value = P.vein ? 1 : 0; U.uFillVeinCol.value.set(P.vein || '#000000');
-    U.uGlowColor.value.set(P.glow || '#000000'); U.uGlow.value = P.type === 3 ? (S.glow ?? 2.2) : 0;
     const pour = [S.fillLevel, S.flood, S.menisc].join('|');
     U.uFillLevel.value = S.fillLevel; U.uFlood.value = !!S.flood; U.uMenisc.value = S.menisc;
     if (pour !== this._pour) { this._pour = pour; this.shadowDirty = true; }   // the pour's shape changed: one shadow redraw
     if (this.flushKey() !== prevFlush) this.buildMeshes();
-    this.updateBloom();
   }
   flushKey() { const S = this.state; return [S.sanded, S.fill, S.meshRes, S.margin, !!S.flood].join('|'); }
   blankDist() { const t = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat, THREE.UnsignedByteType); t.needsUpdate = true; return t; }
@@ -580,10 +559,10 @@ export class Viewer {
 
   setLighting(o) {
     this.dirty = true;
-    if (o.light && LIGHTS[o.light]) { const L = LIGHTS[o.light]; Object.assign(this.state, { az: L.az, el: L.el, key: L.key, env: L.env, warm: L.warm, fillLight: L.fill, exposure: L.exp }); }
+    if (o.light && LIGHTS[o.light]) { const L = LIGHTS[o.light]; Object.assign(this.state, { az: L.az, el: L.el, key: L.key, env: L.env, warm: L.warm, fillLight: L.fill, exposure: L.exp, ao: L.ao ?? 0.25 }); }
     Object.assign(this.state, o);
     const S = this.state;
-    this.renderer.toneMappingExposure = S.exposure * EXPOSURE_CAL;
+    this.renderer.toneMappingExposure = S.exposure * (S.bright ?? 1) * EXPOSURE_CAL;   // preset exposure x the panel's Brightness
     this.key.intensity = S.key;
     // Forge warmth: white toward a warm tungsten (#ffcf9a) or a cool daylight (#bcd4ff)
     const w = +S.warm || 0; this.key.color.set(0xffffff).lerp(new THREE.Color(w >= 0 ? '#ffcf9a' : '#bcd4ff'), Math.min(Math.abs(w), 1));
@@ -600,7 +579,6 @@ export class Viewer {
     const at = S.az + ',' + S.el;
     if (at !== this._lightAt) { this._lightAt = at; this.placeLight(); }
     else this.updateKeyShare();
-    this.updateBloom();
   }
 
   placeLight() {
@@ -657,30 +635,6 @@ export class Viewer {
     this.dirty = true;
   }
 
-  updateBloom() {
-    const S = this.state, glow = FILLS[S.fillPreset]?.type === 3 && ['epoxy'].includes(S.fill);
-    this.bloomOn = glow;
-    if (glow && !this.composer) {
-      const size = this.renderer.getSize(new THREE.Vector2());
-      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
-      this.composer = new EffectComposer(this.renderer, rt);
-      this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloom = new UnrealBloomPass(size, 0.3, 0.2, 0.3);
-      const hp = this.bloom.materialHighPassFilter; hp.fragmentShader = EMISSIVE_HIGHPASS; hp.needsUpdate = true;
-      this.composer.addPass(this.bloom); this.composer.addPass(new OutputPass());
-      this.resize();
-    }
-    // only the emissive share reaches the bloom (see EMISSIVE_HIGHPASS); a tight radius keeps it a glow on the
-    // pigment, not a haze over the board
-    // A glow pour photographed in a dim room: the halo hugs the lit resin (only the two finest mips, high threshold so
-    // just the brightest emissive pixels bloom) and the board stays readable around it.
-    if (this.bloom) {
-      const B = this.bloom, dim = S.env < 0.2;
-      B.strength = dim ? 0.5 : 0.28; B.radius = 0.0; B.threshold = 0.4; B.highPassUniforms.smoothWidth.value = 0.2;
-      B.compositeMaterial.uniforms.bloomFactors.value = [1.0, 0.6, 0.22, 0.04, 0.0];
-    }
-  }
-
   // ------------------------------------------------------------ camera
   setView(name) {
     this.dirty = true;
@@ -726,7 +680,6 @@ export class Viewer {
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = '100%'; this.renderer.domElement.style.height = '100%';
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
-    if (this.composer) { this.composer.setPixelRatio(this.renderer.getPixelRatio()); this.composer.setSize(w, h); }
   }
 
   // ------------------------------------------------------------ on-demand rendering
@@ -765,7 +718,7 @@ export class Viewer {
     if (this.group.visible) this.bakeIfNeeded();
     if (this.quality === 'full' && this.depth && this.lodStep(this.depth) !== this.lodSt) this.buildMeshes();   // zoom settled: re-pick the grid
     if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; this.shadowDraft = this.quality === 'draft'; }
-    if (this.bloomOn && this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
   }
 
   async exportPNG(scale = 2) {

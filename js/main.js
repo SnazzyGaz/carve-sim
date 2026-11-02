@@ -26,17 +26,16 @@ for (const el of $$('.slider')) {
   const k = el.dataset.k, u = el.dataset.u || '';
   el.innerHTML = `<div class="hd"><span>${el.dataset.label || k}</span><output></output></div><input type="range" min="${el.dataset.min}" max="${el.dataset.max}" step="${el.dataset.step}" value="${el.dataset.v}">`;
   const inp = el.querySelector('input'), out = el.querySelector('output');
-  const paint = () => { const p = (inp.value - inp.min) / (inp.max - inp.min) * 100; inp.style.setProperty('--p', p + '%'); out.textContent = el.dataset.pct ? Math.round(inp.value * 100) + '%' : fmt(inp.value, el.dataset.step) + (u ? ' ' + u : ''); };
+  const paint = () => { const p = (inp.value - inp.min) / (inp.max - inp.min) * 100; inp.style.setProperty('--p', p + '%'); out.textContent = el.dataset.pct ? Math.round(inp.value * 100) + '%' : fmt(inp.value, el.dataset.step) + (u ? (u === '°' ? u : ' ' + u) : ''); };
   paint();
   inp.addEventListener('input', () => {
     paint();
     const v = parseFloat(inp.value);
     if (el.dataset.scope === 'view') {
       viewer.interact();                 // draft frames while dragging, full quality when it stops
-      if (k === 'glow') viewer.setMaterial({ glow: v });
-      else if (k === 'fillLevel' || k === 'menisc') { const o = { [k]: v }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); }
+      if (k === 'fillLevel' || k === 'menisc') { const o = { [k]: v }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); }
       else if (k === 'charScale') { viewer.uniforms.uCharScale.value = v; viewer.dirty = true; }
-      else viewer.setLighting({ [k]: v });
+      else viewer.setLighting({ [k]: v });   // az, bright
     }
     el.dispatchEvent(new CustomEvent('slide', { detail: v }));
   });
@@ -69,7 +68,7 @@ seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', view
   let html = '', grp = '';
   for (const [k, f] of Object.entries(FILLS)) {
     if (f.group !== grp) { grp = f.group; html += `<div class="grp">${grp}</div>`; }
-    const bg = f.type === 1 ? `linear-gradient(135deg, ${f.color}, #fff8 45%, ${f.color} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.type === 3 ? `radial-gradient(${f.glow}, ${f.color})` : f.color;
+    const bg = f.type === 1 ? `linear-gradient(135deg, ${f.color}, #fff8 45%, ${f.color} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
     html += `<button data-v="${k}"><span class="sw" style="background:${bg}"></span>${f.name}</button>`;
   }
   $('#resins').innerHTML = html;
@@ -80,20 +79,26 @@ function fillUI(v) {
   $('#fillEpoxy').classList.toggle('hidden', v !== 'epoxy');
   $('#fillInlay').classList.toggle('hidden', !(v === 'inlay' || v === 'reverse'));
   $('#fillChar').classList.toggle('hidden', v !== 'char');
-  $('#sandRow').classList.toggle('hidden', v === 'none');
+  $('#sandRow').classList.toggle('hidden', v === 'none' || v === 'char');
+  pourUI();
   $('#inlayLabel').textContent = v === 'reverse' ? 'Field species (the board shows through as the design)' : 'Inlay species (fills the carve)';
 }
-seg('#fill', (v) => { fillUI(v); viewer.setMaterial({ fill: v }); });
-$('#sanded').onchange = (e) => viewer.setMaterial({ sanded: e.target.checked });
+// as-poured controls only mean something before the face is sanded, so they appear when Sanded flush is off
+function pourUI() { $('#pourCtl').classList.toggle('hidden', !(viewer.state.fill === 'epoxy' && !viewer.state.sanded)); }
+seg('#fill', (v) => { viewer.setMaterial({ fill: v }); fillUI(v); });
+$('#sanded').onchange = (e) => { viewer.setMaterial({ sanded: e.target.checked }); pourUI(); };
 $('#flood').onchange = (e) => { const o = { flood: e.target.checked }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); };
-$('#lightPreset').innerHTML = Object.entries(LIGHTS).map(([k, l]) => `<option value="${k}">${l.name}</option>`).join('');
-$('#lightPreset').onchange = (e) => { viewer.setLighting({ light: e.target.value }); syncLightSliders(); };
-function syncLightSliders() { for (const k of ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao']) slider(k).set(viewer.state[k]); }
+// light: a preset sets the whole rig (height, strength, warmth, fill, ambient); the panel adds direction and brightness
+$('#lightPreset').innerHTML = Object.entries(LIGHTS).map(([k, l]) => `<button data-v="${k}">${l.name}</button>`).join('');
+seg('#lightPreset', (v) => { viewer.setLighting({ light: v }); syncLightSliders(); }); segSet('#lightPreset', viewer.state.light);
+function syncLightSliders() { for (const k of ['az', 'bright']) slider(k).set(viewer.state[k] ?? 1); segSet('#lightPreset', viewer.state.light); }
 $('#shadows').onchange = (e) => viewer.setLighting({ shadows: e.target.checked });
-$('#sway').onchange = (e) => viewer.setSway(e.target.checked);
+$('#sway').onclick = () => { const on = !viewer.state.sway; viewer.setSway(on); $('#sway').classList.toggle('on', on); };
 seg('#backdrop', (v) => viewer.setLighting({ backdrop: v }));
-$('#meshRes').onchange = (e) => viewer.setMeshRes(+e.target.value);
-$$('#views button').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
+seg('#meshRes', (v) => viewer.setMeshRes(+v));
+$$('#views button[data-view]').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
+// cards fold like Relief Forge's: click the heading
+$$('.card > h3').forEach((h) => h.onclick = () => h.parentElement.classList.toggle('folded'));
 
 // tabs
 $$('.tabs>button').forEach((b) => b.onclick = () => {
@@ -105,8 +110,8 @@ $$('.tabs>button').forEach((b) => b.onclick = () => {
 
 // ---------------------------------------------------------------- look A / B
 // two complete looks (wood, finish, fill, light) to flip between; edits always go to the active letter
-const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'insert', 'sanded', 'glow', 'fillLevel', 'flood', 'menisc'];
-const LOOK_L = ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao', 'shadows', 'backdrop'];
+const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'insert', 'sanded', 'fillLevel', 'flood', 'menisc'];
+const LOOK_L = ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao', 'bright', 'shadows', 'backdrop'];
 const looks = { A: null, B: null }; let lookOn = 'A';
 const grabLook = () => { const S = viewer.state, m = {}, l = { light: S.light }; for (const k of LOOK_M) m[k] = S[k]; for (const k of LOOK_L) l[k] = S[k]; return { m, l }; };
 function applyLook(L) {
@@ -304,8 +309,8 @@ $('#btnPng').onclick = async () => {
 
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
-  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); }
-  if (o.light) { viewer.setLighting(o.light); syncLightSliders(); if (o.light.light) $('#lightPreset').value = o.light.light; }
+  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
+  if (o.light) { viewer.setLighting(o.light); syncLightSliders(); }
   if (o.view) viewer.setView(o.view);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };

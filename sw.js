@@ -1,7 +1,7 @@
 /* Offline cache for Carve Sim. The app shell and the sample SVGs are cached on install (~0.5 MB); everything else same-origin (the tracer's OpenCV
  * wasm, samples, imported files fetched by URL) is cached the first time it is fetched. Code and pages are
  * network-first (so an update shows up at once when online), the big immutable files cache-first. */
-const V = 'carve-sim-showroom-3';
+const V = 'carve-sim-showroom-4';
 const CORE = ['./', 'index.html', 'css/app.css', 'js/main.js', 'js/viewer.js', 'js/materials.js', 'js/shader.js',
   'js/svg-import.js', 'js/svg-worker.js', 'js/bake-lib.js', 'js/sdf-lib.js', 'vendor/three-lite.min.js', 'samples/index.json', 'samples/old-fisherman.svg',
   'samples/bald-eagle.svg', 'samples/wolf-pocket-levels.svg', 'samples/stag-engrave.svg'];
