@@ -4,6 +4,7 @@
 import { build } from 'esbuild';
 import { readFileSync, readdirSync, copyFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,7 +29,9 @@ await build({ entryPoints: [path.join(src, 'potrace-entry.js')], bundle: true, f
   alias: { jimp: path.join(src, 'jimp-stub.js') }, outfile: path.join(vendor, 'potrace-core.min.js') });
 console.log('potrace-core.min.js');
 
-// 3. OpenCV.js 5.0 (single file, WebAssembly embedded)
-copyFileSync(path.join(root, 'node_modules/@techstark/opencv-js/dist/opencv.js'), path.join(vendor, 'opencv.js'));
+// 3. OpenCV.js 5.0: the npm file embeds its WebAssembly as a 12 MB string; split it into opencv.wasm
+//    (compiled while it streams in, with a progress bar) + a 128 kB loader. Same build, same bytes.
+execFileSync(process.execPath, [path.join(root, 'tools/split-opencv.cjs'), path.join(root, 'node_modules/@techstark/opencv-js/dist/opencv.js'),
+  path.join(vendor, 'opencv.js'), path.join(vendor, 'opencv.wasm')], { stdio: 'inherit' });
 copyFileSync(path.join(root, 'node_modules/potrace/LICENSE'), path.join(vendor, 'POTRACE-LICENSE.txt'));
-console.log('opencv.js copied');
+console.log('opencv.js + opencv.wasm written');

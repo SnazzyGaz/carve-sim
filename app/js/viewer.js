@@ -5,18 +5,29 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { PARS, VERT_PARS, VERT_MAIN } from './shader.js';
+import { COMMON, PARS, VERT_MAIN, BAKE_VERT, BAKE_FRAG } from './shader.js';
 import { SPECIES, FINISHES, FILLS, LIGHTS } from './materials.js';
 
 const lin = (hex) => new THREE.Color(hex); // ColorManagement: hex is sRGB -> stored linear
+const SETTLE_MS = 160;                     // full-quality frame this long after the last movement
 
+// How it renders (see docs/perf-notes.md):
+//  * the board is a flat grid built once per size/detail; the GPU displaces it from the depth texture,
+//    so a new trace or material only uploads a texture or changes uniforms (no mesh rebuilds)
+//  * frames are drawn only when something changed; while orbiting or dragging a light slider it draws a
+//    draft (pixel ratio <= 1, adaptive, half-density grid), then one full-quality frame once it settles
+//  * the shadow map is redrawn only when the carve, fill or light changes, not every frame
+//  * bloom runs only for the glow resins
 export class Viewer {
   constructor(container) {
     this.el = container;
-    const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.fullPR = Math.min(window.devicePixelRatio || 1, 2);
+    this.draftPR = Math.min(window.devicePixelRatio || 1, 1);
+    r.setPixelRatio(this.fullPR);
     r.toneMapping = THREE.NeutralToneMapping; r.toneMappingExposure = 1.0;
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap;
+    r.shadowMap.autoUpdate = false; this.shadowDirty = true;
     container.appendChild(r.domElement);
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(28, 1, 2, 6000);
@@ -26,6 +37,7 @@ export class Viewer {
     this.controls.zoomToCursor = true;
     const pm = new THREE.PMREMGenerator(r);
     this.envTex = pm.fromScene(new RoomEnvironment(), 0.03).texture;
+    pm.dispose();
     this.scene.environment = this.envTex;
     this.key = new THREE.DirectionalLight(0xffffff, 2.5);
     this.key.castShadow = true;
@@ -38,44 +50,74 @@ export class Viewer {
                    light: 'studio', az: 220, el: 42, exposure: 1.0, env: 0.5, key: 2.0, backdrop: 'dark', meshRes: 1024, margin: 18, thickness: 22 };
     this.uniforms = this.makeUniforms();
     this.makeBackdrop();
-    this.mats = {};
+    this.mats = {}; this.depthMats = {}; this.grids = new Map();
     this.composer = null;
+    this.quality = 'full';
+    this.initBake();
+    this.makeBoard();
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
     this.setLighting({});
     this.setMaterial({});
     this.dirty = true;
-    this.controls.addEventListener('change', () => { this.dirty = true; });
-    const loop = () => { const moved = this.controls.update(); if (moved || this.dirty) { this.dirty = false; this.render(); } this.raf = requestAnimationFrame(loop); };
-    loop();
+    // interaction: draft frames while moving, one full frame after it settles
+    this.interacting = false; this.lastMove = 0; this.frameGaps = [];
+    this.controls.addEventListener('start', () => { this.interacting = true; this.interact(); });
+    this.controls.addEventListener('end', () => { this.interacting = false; this.lastMove = performance.now(); });
+    this.controls.addEventListener('change', () => { this.dirty = true; this.lastMove = performance.now(); });
+    let prev = 0;
+    const loop = (now) => {
+      const moved = this.controls.update();
+      if (moved) this.lastMove = now;
+      if (this.quality === 'draft') {
+        if (prev && (moved || this.dirty)) this.adapt(now - prev);
+        if (!this.interacting && !moved && now - this.lastMove > SETTLE_MS) { this.setQuality('full'); this.dirty = true; }
+      }
+      if (moved || this.dirty) { this.dirty = false; this.render(); }
+      prev = now;
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
     r.domElement.addEventListener('dblclick', (e) => this.focusAt(e));
+    this.warmup();
   }
 
   makeUniforms() {
+    const blank = new THREE.DataTexture(new Uint16Array(2), 1, 1, THREE.RGFormat, THREE.HalfFloatType); blank.needsUpdate = true;
     const u = {
-      uDepth: { value: null }, uArt: { value: new THREE.Vector2(300, 300) }, uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
+      uDepth: { value: blank }, uArt: { value: new THREE.Vector2(300, 300) }, uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
       uMaxDepth: { value: 3 }, uEdge: { value: 0.02 }, uMode: { value: 0 }, uSanded: { value: true }, uFlat: { value: false },
+      uOver: { value: 0.9 }, uStep: { value: 0.3 },
       uWood: { value: Array.from({ length: 14 }, () => new THREE.Vector4()) }, uFinish: { value: new THREE.Vector4(1, 1, 0, 0) },
       uFinishCoatRough: { value: 0.3 }, uFillType: { value: 0 }, uFillColor: { value: new THREE.Color() },
       uFillAbsorb: { value: new THREE.Vector3(1, 1, 1) }, uFillScatter: { value: new THREE.Color() }, uGlowColor: { value: new THREE.Color() },
+      uBakeA: { value: null }, uBakeB: { value: null }, uBakeRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uGlow: { value: 0 }, uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() },
     };
     return u;
   }
 
+  // shared vertex injection: displacement before projection (so shadows and depth see the carve too)
+  injectVertex(sh, part) {
+    Object.assign(sh.uniforms, this.uniforms, { uPart: { value: part } });
+    let v = COMMON + sh.vertexShader;
+    if (part !== 1) v = v.replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);'); // top/fill: normal comes from the depth map per pixel
+    v = v.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN);
+    sh.vertexShader = v;
+  }
+
   material(part) {
     if (this.mats[part]) return this.mats[part];
     const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.3, envMapIntensity: 1 });
-    const shared = this.uniforms;
     m.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, shared, { uPart: { value: part } });
-      sh.vertexShader = VERT_PARS + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n' + VERT_MAIN);
+      this.injectVertex(sh, part);
       let f = sh.fragmentShader;
-      f = f.replace('void main() {', PARS + '\nvoid main() {');
+      f = f.replace('void main() {', `#define CARVE_PART ${part}\n` + COMMON + PARS + '\nvoid main() {');
       f = f.replace('#include <map_fragment>', 'surface(); diffuseColor.rgb = sAlb;');
       f = f.replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(sRough, 0.04, 1.0);');
       f = f.replace('#include <metalnessmap_fragment>', 'float metalnessFactor = sMetal;');
       f = f.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (sOverrideN) { normal = normalize((viewMatrix * vec4(sN, 0.0)).xyz); }');
+      f = f.replace('#include <clearcoat_normal_fragment_begin>', '#include <clearcoat_normal_fragment_begin>\n#ifdef USE_CLEARCOAT\n if (sOverrideN) clearcoatNormal = normal;\n#endif');
       f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance = sEmis;');
       f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n material.clearcoat = clamp(sCoat,0.0,1.0); material.clearcoatRoughness = clamp(sCoatRough + geometryRoughness, 0.045, 1.0);');
       f = f.replace('#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= sAO; reflectedLight.indirectSpecular *= mix(1.0, sAO, 0.8) * sSpec; reflectedLight.directSpecular *= sSpec; reflectedLight.directDiffuse *= mix(1.0, sAO, 0.35);');
@@ -86,6 +128,54 @@ export class Viewer {
     this.mats[part] = m;
     return m;
   }
+  depthMaterial(part) {   // shadow pass with the same GPU displacement
+    if (this.depthMats[part]) return this.depthMats[part];
+    const m = new THREE.MeshDepthMaterial();
+    m.onBeforeCompile = (sh) => this.injectVertex(sh, part);
+    m.customProgramCacheKey = () => 'carveDepth' + part;
+    return (this.depthMats[part] = m);
+  }
+
+  // ------------------------------------------------------------ baked wood
+  // The solid-wood shader (a dozen 3D noise lookups per pixel) runs once per texel into a mipmapped texture
+  // whenever the carve or species changes, instead of every pixel of every frame. Finish, fill, light and view
+  // changes only touch uniforms. The finest fibre noise is still drawn live so close-ups keep their tooth.
+  initBake() {
+    const r = this.renderer, max = r.capabilities.maxTextureSize;
+    this.bakeLong = Math.min(4096, max);
+    const mk = () => {
+      const rt = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, colorSpace: THREE.SRGBColorSpace });
+      rt.texture.anisotropy = Math.min(8, r.capabilities.getMaxAnisotropy());
+      rt.texture.colorSpace = THREE.SRGBColorSpace;   // 8-bit sRGB storage keeps dark woods free of banding
+      return rt;
+    };
+    this.bakeRT = [mk(), mk()];
+    this.uniforms.uBakeA.value = this.bakeRT[0].texture; this.uniforms.uBakeB.value = this.bakeRT[1].texture;
+    this.bakeMat = new THREE.ShaderMaterial({ vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG(),
+      uniforms: Object.assign({}, this.uniforms, { uBakeK: { value: 0 }, uBakeFlat: { value: false }, uPart: { value: -1 } }), depthTest: false, depthWrite: false });
+    this.bakeScene = new THREE.Scene();
+    const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bakeMat); q.frustumCulled = false; this.bakeScene.add(q);
+    this.bakeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.bakeKeys = ['', ''];
+  }
+  bakeIfNeeded() {
+    const S = this.state, U = this.uniforms, D = this.depth;
+    const rect = U.uBakeRect.value, mode = U.uMode.value;
+    const base = [this.depthVer || 0, rect.x, rect.y, rect.z, rect.w].join(',');
+    const jobs = [[0, mode === 3 ? 1 : 0, false]];
+    if (mode === 2 || mode === 3) jobs.push([1, mode === 2 ? 1 : 0, true]);
+    for (const [slot, k, flat] of jobs) {
+      const key = base + '|' + (k ? S.insert : S.species) + '|' + k + '|' + flat;
+      if (this.bakeKeys[slot] === key) continue;
+      const rt = this.bakeRT[slot], s = this.bakeLong / Math.max(rect.z, rect.w);
+      const w = Math.max(16, Math.round(rect.z * s)), h = Math.max(16, Math.round(rect.w * s));
+      if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
+      this.bakeMat.uniforms.uBakeK.value = k; this.bakeMat.uniforms.uBakeFlat.value = flat;
+      const r = this.renderer, prev = r.getRenderTarget();
+      r.setRenderTarget(rt); r.render(this.bakeScene, this.bakeCam); r.setRenderTarget(prev);
+      this.bakeKeys[slot] = key; this.bakes = (this.bakes || 0) + 1;
+    }
+  }
 
   makeBackdrop() {
     const g = new THREE.PlaneGeometry(6000, 6000);
@@ -95,147 +185,125 @@ export class Viewer {
     this.scene.add(this.floor);
   }
 
-  // ------------------------------------------------------------ depth -> textures & meshes
-  setDepth(depth, tw, th, artW, artH, maxDepth) {
-    this.dirty = true;
-    this.depth = { data: depth, tw, th, artW, artH, maxDepth };
-    // blurred carve mask (~0.7 mm) for AO, lip scorch and resin wicking
-    const mask = new Float32Array(tw * th);
-    for (let i = 0; i < mask.length; i++) mask[i] = depth[i] > 1e-3 ? 1 : 0;
-    const rad = Math.max(1, Math.round(0.45 * tw / artW));
-    let a = mask, b = new Float32Array(mask.length);
-    for (let pass = 0; pass < 3; pass++) { boxBlurH(a, b, tw, th, rad); boxBlurV(b, a, tw, th, rad); }
-    const half = new Uint16Array(tw * th * 2);
-    const toH = THREE.DataUtils.toHalfFloat;
-    for (let i = 0; i < tw * th; i++) { half[2 * i] = toH(depth[i] / maxDepth); half[2 * i + 1] = toH(a[i]); }
-    this.blur = a;
-    if (this.uniforms.uDepth.value) this.uniforms.uDepth.value.dispose();
-    const t = new THREE.DataTexture(half, tw, th, THREE.RGFormat, THREE.HalfFloatType);
-    t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
-    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
-    const U = this.uniforms;
-    U.uDepth.value = t; U.uArt.value.set(artW, artH); U.uTexel.value.set(1 / tw, 1 / th); U.uMaxDepth.value = maxDepth;
+  makeBoard() {
+    this.group = new THREE.Group(); this.group.visible = false; this.scene.add(this.group);
+    const mk = (part) => {
+      const o = new THREE.Mesh(new THREE.BufferGeometry(), this.material(part));
+      o.customDepthMaterial = this.depthMaterial(part);
+      o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;   // displaced on the GPU: CPU bounds are flat
+      this.group.add(o); return o;
+    };
+    this.board = mk(0); this.sides = mk(1); this.fillMesh = mk(2); this.fillMesh.visible = false;
+    this.depth = null; this.buildMeshes(300, 300);
+  }
+
+  // compile every program in the background (parallel shader compile) so the first real frame does not stall
+  warmup() {
+    const r = this.renderer; if (!r.compileAsync) return;
+    const g = this.group, fv = this.fillMesh.visible;
+    g.visible = true; this.fillMesh.visible = true;
+    const p = r.compileAsync(this.scene, this.camera);
+    g.visible = !!this.depth; this.fillMesh.visible = fv;
+    this.warm = p.catch(() => {}).then(() => { this.dirty = true; });
+  }
+
+  // ------------------------------------------------------------ depth -> texture (GPU displacement)
+  // rg: Uint16Array RG half floats (depth / maxDepth, blurred carve mask) built in the worker
+  setDepth(rg, tw, th, artW, artH, maxDepth) {
+    this.dirty = true; this.shadowDirty = true;
+    const first = !this.depth;
+    this.depth = { tw, th, artW, artH, maxDepth }; this.depthVer = (this.depthVer || 0) + 1;
+    const U = this.uniforms, old = U.uDepth.value;
+    if (old.image.width === tw && old.image.height === th && old.userData.carve) { old.image.data = rg; old.needsUpdate = true; }
+    else {
+      const t = new THREE.DataTexture(rg, tw, th, THREE.RGFormat, THREE.HalfFloatType);
+      t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; t.userData.carve = true;
+      U.uDepth.value = t; old.dispose();
+    }
+    U.uArt.value.set(artW, artH); U.uTexel.value.set(1 / tw, 1 / th); U.uMaxDepth.value = maxDepth;
     // cut line sits where the area-averaged depth reaches ~1/4 texel of V slope
     U.uEdge.value = Math.min(0.25 * (artW / tw) * 1.7, maxDepth * 0.05);
-    const first = !this.board;
     this.buildMeshes();
+    this.group.visible = true;
     if (first) this.setView('angle');
     this.placeLight();
   }
 
-  sampleDepth(u, v) { // u,v in mm on the art; bilinear
-    const D = this.depth; if (u < 0 || v < 0 || u > D.artW || v > D.artH) return 0;
-    const x = Math.min(u / D.artW * D.tw - 0.5, D.tw - 1.001), y = Math.min(v / D.artH * D.th - 0.5, D.th - 1.001);
-    const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y)), fx = Math.max(0, x - x0), fy = Math.max(0, y - y0);
-    const i = y0 * D.tw + x0, d = D.data;
-    return (d[i] * (1 - fx) + d[i + 1] * fx) * (1 - fy) + (d[i + D.tw] * (1 - fx) + d[i + D.tw + 1] * fx) * fy;
-  }
-  sampleBlur(u, v) {
-    const D = this.depth; if (u < 0 || v < 0 || u > D.artW || v > D.artH) return 0;
-    const x = Math.min(Math.round(u / D.artW * D.tw), D.tw - 1), y = Math.min(Math.round(v / D.artH * D.th), D.th - 1);
-    return this.blur[y * D.tw + x];
-  }
-
-  gridGeometry(x0, z0, x1, z1, nx, nz, heightFn) {
+  // flat grid (x0..x1, z0..z1) at nx*nz quads, plus a half-density index over the same vertices for draft frames
+  grid(x0, z0, x1, z1, nx, nz) {
+    const key = [x0, z0, x1, z1, nx, nz].join(',');
+    if (this.grids.has(key)) return this.grids.get(key);
     const pos = new Float32Array((nx + 1) * (nz + 1) * 3);
     let k = 0;
     for (let j = 0; j <= nz; j++) {
       const v = z0 + (z1 - z0) * j / nz;
-      for (let i = 0; i <= nx; i++) {
-        const u = x0 + (x1 - x0) * i / nx;
-        pos[k++] = u; pos[k++] = heightFn ? heightFn(u, v) : 0; pos[k++] = v;
+      for (let i = 0; i <= nx; i++) { pos[k++] = x0 + (x1 - x0) * i / nx; pos[k++] = 0; pos[k++] = v; }
+    }
+    const attr = new THREE.BufferAttribute(pos, 3);
+    const index = (stride) => {
+      const cols = [], rows = [];
+      for (let i = 0; i < nx; i += stride) cols.push(i); cols.push(nx);
+      for (let j = 0; j < nz; j += stride) rows.push(j); rows.push(nz);
+      const idx = new Uint32Array((cols.length - 1) * (rows.length - 1) * 6); let n = 0;
+      for (let b = 0; b < rows.length - 1; b++) for (let a = 0; a < cols.length - 1; a++) {
+        const p = rows[b] * (nx + 1) + cols[a], q = rows[b] * (nx + 1) + cols[a + 1], c = rows[b + 1] * (nx + 1) + cols[a], d = rows[b + 1] * (nx + 1) + cols[a + 1];
+        idx[n++] = p; idx[n++] = c; idx[n++] = q; idx[n++] = q; idx[n++] = c; idx[n++] = d;
       }
-    }
-    const idx = new Uint32Array(nx * nz * 6); k = 0;
-    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 1, d = c + 1;
-      idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setIndex(new THREE.BufferAttribute(idx, 1));
-    g.computeVertexNormals();
-    return g;
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', attr); g.setIndex(new THREE.BufferAttribute(idx, 1)); return g;
+    };
+    const full = index(1), draft = Math.max(nx, nz) > 600 ? index(2) : full;
+    const out = { full, draft };
+    if (this.grids.size > 6) { for (const [kk, gg] of this.grids) { gg.full.dispose(); if (gg.draft !== gg.full) gg.draft.dispose(); this.grids.delete(kk); break; } }
+    this.grids.set(key, out);
+    return out;
   }
 
-  buildMeshes() {
-    this.dirty = true;
-    const D = this.depth; if (!D) return;
+  // picks the (cached) grids for the current art size, margin, detail and fill state; no per-vertex work after the first time
+  buildMeshes(artW, artH) {
+    this.dirty = true; this.shadowDirty = true;
+    const D = this.depth || { artW: artW || 300, artH: artH || 300, tw: 1024, th: 1024 };
     const S = this.state, m = S.margin, T = S.thickness;
-    for (const o of [this.board, this.sides, this.fillMesh]) if (o) { this.group.remove(o); o.geometry.dispose(); }
-    if (!this.group) { this.group = new THREE.Group(); this.scene.add(this.group); }
     this.group.position.set(-D.artW / 2, T, -D.artH / 2); // board origin at art top-left; board sits on the floor
     this.uniforms.uOrigin.value.copy(this.group.position);
     this.floor.position.y = 0;
     const flushFill = S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill);
-    const res = S.meshRes;
-    const step = Math.max(D.artW, D.artH) / Math.min(res, Math.max(D.tw, D.th));
+    const step = Math.max(D.artW, D.artH) / Math.min(S.meshRes, Math.max(D.tw, D.th));
     const x0 = -m, z0 = -m, x1 = D.artW + m, z1 = D.artH + m;
-    const nx = flushFill ? 8 : Math.round((x1 - x0) / step), nz = flushFill ? 8 : Math.round((z1 - z0) / step);
-    const hf = flushFill ? null : (u, v) => -this.sampleDepth(u, v);
-    this.board = new THREE.Mesh(this.gridGeometry(x0, z0, x1, z1, nx, nz, hf), this.material(0));
-    this.board.castShadow = true; this.board.receiveShadow = true;
-    this.group.add(this.board);
-    // sides + bottom following the edge profile
-    const sideG = this.sideGeometry(x0, z0, x1, z1, flushFill ? 8 : nx, flushFill ? 8 : nz, hf, -T);
-    this.sides = new THREE.Mesh(sideG, this.material(1));
-    this.sides.castShadow = true; this.sides.receiveShadow = true;
-    this.group.add(this.sides);
-    this.fillMesh = null;
-    if (!S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill)) {
-      const over = S.fill === 'epoxy' ? 0.9 : 1.6;
-      const fx = Math.round(D.artW / step), fz = Math.round(D.artH / step);
-      const g = this.gridGeometry(0, 0, D.artW, D.artH, fx, fz, (u, v) => {
-        const d = this.sampleDepth(u, v), b = this.sampleBlur(u, v);
-        if (S.fill === 'epoxy') {
-          const h = over * smoothstep(0.02, 0.55, b);       // overpour bulge with meniscus spill
-          return Math.max(h, -d + 0.02) + (h < 0.03 && d < 0.02 ? -0.5 : 0);
-        }
-        return d > 0.02 ? over : -0.6;                          // plug standing proud of the pocket
-      });
-      // drop triangles that sit fully below the board top (not part of the pour)
-      const pos = g.attributes.position.array, idx = g.index.array, keep = [];
-      for (let i = 0; i < idx.length; i += 3) {
-        const ya = pos[idx[i] * 3 + 1], yb = pos[idx[i + 1] * 3 + 1], yc = pos[idx[i + 2] * 3 + 1];
-        if (Math.max(ya, yb, yc) > 0.015) keep.push(idx[i], idx[i + 1], idx[i + 2]);
-      }
-      g.setIndex(keep); g.computeVertexNormals();
-      this.fillMesh = new THREE.Mesh(g, this.material(2));
-      this.fillMesh.castShadow = true; this.fillMesh.receiveShadow = true;
-      this.group.add(this.fillMesh);
-    }
+    this.uniforms.uBakeRect.value.set(x0, z0, x1 - x0, z1 - z0);
+    this.topGrid = flushFill ? this.grid(x0, z0, x1, z1, 8, 8) : this.grid(x0, z0, x1, z1, Math.round((x1 - x0) / step), Math.round((z1 - z0) / step));
+    this.sides.geometry = this.sideGeometry(x0, z0, x1, z1, -T);
+    const over = !S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill);
+    this.fillMesh.visible = over;
+    this.fillGrid = over ? this.grid(0, 0, D.artW, D.artH, Math.round(D.artW / step), Math.round(D.artH / step)) : null;
+    this.uniforms.uOver.value = S.fill === 'epoxy' ? 0.9 : 1.6;
+    this.uniforms.uStep.value = step;
     this.uniforms.uFlat.value = flushFill;
+    this.applyGrids();
+  }
+  applyGrids() {
+    const q = this.quality === 'draft' ? 'draft' : 'full';
+    this.board.geometry = this.topGrid[q];
+    if (this.fillGrid) this.fillMesh.geometry = this.fillGrid[q];
   }
 
-  sideGeometry(x0, z0, x1, z1, nx, nz, hf, yb) {
-    const P = [], I = [];
-    const edge = (pts) => {
-      const base = P.length / 3;
-      for (const [u, v] of pts) { P.push(u, hf ? hf(u, v) : 0, v, u, yb, v); }
-      for (let i = 0; i < pts.length - 1; i++) { const a = base + 2 * i; I.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); }
-    };
-    const L = (a, b, n, f) => Array.from({ length: n + 1 }, (_, i) => f(a + (b - a) * i / n));
-    edge(L(x0, x1, nx, (u) => [u, z1]));        // front
-    edge(L(x1, x0, nx, (u) => [u, z0]));        // back
-    edge(L(z1, z0, nz, (v) => [x1, v]));        // right
-    edge(L(z0, z1, nz, (v) => [x0, v]));        // left
-    const b = P.length / 3; P.push(x0, yb, z0, x1, yb, z0, x0, yb, z1, x1, yb, z1); I.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+  sideGeometry(x0, z0, x1, z1, yb) {   // the margin is never carved, so the edges are a plain box
+    const key = [x0, z0, x1, z1, yb].join(',');
+    if (this._sideKey === key) return this._side;
+    if (this._side) this._side.dispose();
+    const P = [], N = [], I = [];
+    const quad = (a, b, c, d, n) => { const o = P.length / 3; P.push(...a, ...b, ...c, ...d); for (let i = 0; i < 4; i++) N.push(...n); I.push(o, o + 1, o + 2, o + 2, o + 1, o + 3); };
+    quad([x0, 0, z1], [x0, yb, z1], [x1, 0, z1], [x1, yb, z1], [0, 0, 1]);     // front
+    quad([x1, 0, z0], [x1, yb, z0], [x0, 0, z0], [x0, yb, z0], [0, 0, -1]);    // back
+    quad([x1, 0, z1], [x1, yb, z1], [x1, 0, z0], [x1, yb, z0], [1, 0, 0]);     // right
+    quad([x0, 0, z0], [x0, yb, z0], [x0, 0, z1], [x0, yb, z1], [-1, 0, 0]);    // left
+    quad([x0, yb, z0], [x1, yb, z0], [x0, yb, z1], [x1, yb, z1], [0, -1, 0]);  // bottom
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setIndex(I);
-    // flat normals per face direction (avoid smoothing round the corners)
-    g.computeVertexNormals();
-    const n = g.attributes.normal.array, p = g.attributes.position.array;
-    for (let i = 0; i < n.length; i += 3) {
-      const u = p[i], y = p[i + 1], v = p[i + 2];
-      if (Math.abs(y - yb) < 1e-6 && i / 3 >= b) { n[i] = 0; n[i + 1] = -1; n[i + 2] = 0; continue; }
-      if (Math.abs(v - z1) < 1e-6 && i / 3 < (nx + 1) * 2) { n[i] = 0; n[i + 1] = 0; n[i + 2] = 1; }
-      else if (Math.abs(v - z0) < 1e-6 && i / 3 < (nx + 1) * 4) { n[i] = 0; n[i + 1] = 0; n[i + 2] = -1; }
-      else if (Math.abs(u - x1) < 1e-6) { n[i] = 1; n[i + 1] = 0; n[i + 2] = 0; }
-      else if (Math.abs(u - x0) < 1e-6) { n[i] = -1; n[i + 1] = 0; n[i + 2] = 0; }
-    }
-    g.attributes.normal.needsUpdate = true;
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); g.setIndex(I);
+    this._sideKey = key; this._side = g;
     return g;
   }
+  setMeshRes(res) { this.state.meshRes = res; this.buildMeshes(); }
 
   // ------------------------------------------------------------ materials & lighting
   setMaterial(o) {
@@ -261,7 +329,7 @@ export class Viewer {
     const ab = P.absorb || [1, 1, 1]; U.uFillAbsorb.value.set(ab[0], ab[1], ab[2]);
     U.uFillScatter.value.set(P.scatter || '#000000');
     U.uGlowColor.value.set(P.glow || '#000000'); U.uGlow.value = P.type === 3 ? (S.glow ?? 2.2) : 0;
-    if (this.flushKey() !== prevFlush && this.depth) this.buildMeshes();
+    if (this.flushKey() !== prevFlush) this.buildMeshes();
     this.updateBloom();
   }
   flushKey() { const S = this.state; return [S.sanded, S.fill, S.meshRes, S.margin].join('|'); }
@@ -277,11 +345,12 @@ export class Viewer {
     this.fillLight.intensity = S.env * 0.15;
     const dark = S.backdrop === 'dark';
     const bg = dark ? 0x141312 : 0xd9d6d0;
-    this.scene.background = new THREE.Color(bg).multiplyScalar(dark ? 1 : 1);
+    if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 900, 2600); }
+    this.scene.background.set(bg); this.scene.fog.color.set(bg);
     this.floorMat.color.set(dark ? 0x23211f : 0xbdb8b0);
-    this.scene.fog = new THREE.Fog(bg, 900, 2600);
     this.placeLight();
     this.updateBloom();
+    this.shadowDirty = true;
   }
 
   placeLight() {
@@ -294,6 +363,7 @@ export class Viewer {
     const c = this.key.shadow.camera; c.left = -R; c.right = R; c.top = R; c.bottom = -R; c.near = R * 1.5; c.far = R * 4.5;
     c.updateProjectionMatrix();
     this.uniforms.uKeyDir.value.copy(dir);
+    this.shadowDirty = true; this.dirty = true;
   }
 
   updateBloom() {
@@ -352,38 +422,44 @@ export class Viewer {
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     if (this.composer) { this.composer.setPixelRatio(this.renderer.getPixelRatio()); this.composer.setSize(w, h); }
   }
-  render() { if (this.bloomOn && this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera); }
+
+  // ------------------------------------------------------------ on-demand rendering
+  // draft while something is moving (orbit, zoom, a light slider), full quality once it settles
+  interact() { this.lastMove = performance.now(); this.setQuality('draft'); this.dirty = true; }
+  setQuality(q) {
+    if (q === this.quality) return;
+    const lighter = this.draftPR < this.fullPR || (this.topGrid && this.topGrid.draft !== this.topGrid.full);
+    if (q === 'draft' && !lighter) return;
+    this.quality = q;
+    this.renderer.setPixelRatio(q === 'draft' ? this.draftPR : this.fullPR);
+    this.applyGrids(); this.resize();
+    if (q === 'full' && this.shadowDraft) this.shadowDirty = true;   // shadow drawn from the draft grid: redo it at full detail
+  }
+  // keep draft frames near 60 fps: drop the draft pixel ratio when frames run long, raise it back when there is headroom
+  adapt(gap) {
+    const g = this.frameGaps; g.push(gap); if (g.length < 8) return;
+    const avg = g.reduce((a, b) => a + b, 0) / g.length; g.length = 0;
+    const cap = Math.min(window.devicePixelRatio || 1, 1);
+    let pr = this.draftPR;
+    if (avg > 30 && pr > 0.5) pr = Math.max(0.5, pr * 0.8);
+    else if (avg < 18 && pr < cap) pr = Math.min(cap, pr * 1.15);
+    if (pr !== this.draftPR) { this.draftPR = pr; this.renderer.setPixelRatio(pr); this.resize(); }
+  }
+  requestRender(full = false) { if (full) this.setQuality('full'); this.dirty = true; }
+  render() {
+    if (this.group.visible) this.bakeIfNeeded();
+    if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; this.shadowDraft = this.quality === 'draft'; }
+    if (this.bloomOn && this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera);
+  }
 
   async exportPNG(scale = 2) {
+    if (this.warm) await this.warm;
+    this.setQuality('full');
     const r = this.renderer, pr = r.getPixelRatio();
     r.setPixelRatio(pr * scale); this.resize();
     this.render();
-    const blob = await new Promise((res) => r.domElement.toBlob(res, 'image/png'));
+    const blob = await new Promise((res) => r.domElement.toBlob(res, 'image/png'));   // same task as the render: no preserveDrawingBuffer needed
     r.setPixelRatio(pr); this.resize(); this.render();
     return blob;
-  }
-}
-
-function smoothstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
-function boxBlurH(src, dst, w, h, r) {
-  const k = 1 / (2 * r + 1);
-  for (let y = 0; y < h; y++) {
-    const o = y * w; let acc = 0;
-    for (let x = -r; x <= r; x++) acc += src[o + Math.min(w - 1, Math.max(0, x))];
-    for (let x = 0; x < w; x++) {
-      dst[o + x] = acc * k;
-      acc += src[o + Math.min(w - 1, x + r + 1)] - src[o + Math.max(0, x - r)];
-    }
-  }
-}
-function boxBlurV(src, dst, w, h, r) {
-  const k = 1 / (2 * r + 1);
-  for (let x = 0; x < w; x++) {
-    let acc = 0;
-    for (let y = -r; y <= r; y++) acc += src[Math.min(h - 1, Math.max(0, y)) * w + x];
-    for (let y = 0; y < h; y++) {
-      dst[y * w + x] = acc * k;
-      acc += src[Math.min(h - 1, y + r + 1) * w + x] - src[Math.max(0, y - r) * w + x];
-    }
   }
 }

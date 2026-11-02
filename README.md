@@ -16,7 +16,7 @@ app/                 the whole static site; this is what GitHub Pages publishes
   samples/           sample artwork + index.json
 desktop/             (future) Electron or Tauri wrapper for the Windows installer; loads app/ unchanged
 tools/               build-vendor.mjs, parity and screenshot scripts (dev only, not deployed)
-.github/workflows/   pages.yml: publishes app/ to GitHub Pages
+docs/pages-workflow.yml  optional Actions workflow to publish app/ (copy to .github/workflows/pages.yml)
 ```
 
 Same pattern as Relief Forge: a static web app on GitHub Pages first, and later a Windows installer built from this repo by a thin desktop shell in `desktop/` that points at `app/index.html`. Nothing in `app/` assumes a site root, so it runs the same at `/`, at `/carve-sim/` on Pages, or inside a wrapper.
@@ -32,9 +32,13 @@ cd app && python3 -m http.server 8766     # then open http://127.0.0.1:8766/
 
 ## Deploy to GitHub Pages
 
-1. Push the repo to GitHub.
-2. In **Settings → Pages → Source**, choose **GitHub Actions**.
-3. `.github/workflows/pages.yml` uploads `app/` as-is on every push to `main`. There's no build step, because the vendor files are committed.
+The live site is served from the `gh-pages` branch, which is just `app/` split out:
+
+```
+git subtree split --prefix app -b gh-pages && git push -f origin gh-pages
+```
+
+Or copy `docs/pages-workflow.yml` to `.github/workflows/pages.yml` and choose **GitHub Actions** in **Settings → Pages → Source**. There's no build step, because the vendor files are committed.
 
 ## Rebuilding the vendor files
 
@@ -71,6 +75,10 @@ It was checked against the Python engine on the samples (`tools/parity.py`):
 
 The small gap against default Python comes from OpenCV itself. Desktop OpenCV uses AVX2 SIMD code in the cubic resize and the bilateral filter, and that rounds about ±1 grey level differently from plain C. The WebAssembly build uses plain C. With `cv2.setUseOptimized(False)`, Python gives the same mask as the browser to the pixel, and the fisherman SVG matches path for path. So the "reference" numbers also shift a little from one CPU to another. The single extra node on biomech is because Python traces each region in its own crop, while the browser traces the whole image at once.
 
+## Performance
+
+The 3D view displaces a static grid on the GPU from the depth texture, bakes the wood into a texture, only redraws when something changes, and drops to a draft mesh and lower resolution while you drag. See [docs/perf-notes.md](docs/perf-notes.md) for how this compares with Relief Forge and for the before/after numbers.
+
 ## Licences
 
 - **potrace** (the curve-fitting port in `vendor/potrace-core.min.js`) is GPL-2.0, so Carve Sim as distributed is GPL-2.0-or-later. See `app/vendor/POTRACE-LICENSE.txt`.
@@ -79,7 +87,8 @@ The small gap against default Python comes from OpenCV itself. Desktop OpenCV us
 
 ## Known gaps
 
-- `opencv.js` is the stock 13 MB build (3.7 MB gzipped, which is what Pages serves), not a custom minimal build. The first load takes a moment; after that it comes from the browser cache.
+- OpenCV is the stock build (kept whole so the trace stays byte-identical), split into a 128 KB loader and an 11.96 MB `opencv.wasm` (3.5 MB gzipped). It loads lazily in the worker with a progress bar; after the first visit it comes from the browser cache. A custom minimal build would be smaller.
+- The baked wood texture is 4096 texels on the board's long side, about 12 texels/mm on a 300 mm piece. On very large boards it gets softer in extreme close-ups (the live fibre noise hides most of it). The board's edges still use the live wood shader.
 - SVGs that aren't already CNC output get rasterised on the main thread (3000 px longest side) before the trace, so their numbers can differ slightly from the Python version, which uses resvg.
 - The canvas antialiasing in the 2D previews is a touch different from resvg's (IoU 0.99+).
 - In the stats JSON export, whole numbers print as `300` instead of `300.0`.

@@ -1,16 +1,38 @@
 // GLSL injected into MeshPhysicalMaterial: solid procedural wood, char, epoxy/inlay fills.
 // Everything is in board millimetres: vBoard.x = across the art (u), vBoard.z = down the art (v),
 // vBoard.y = height (0 = board top, negative = carved).
-export const PARS = /* glsl */`
+// Shared by the vertex shader (GPU displacement of a static grid), the shadow depth pass and the fragment shader.
+export const COMMON = /* glsl */`
 uniform sampler2D uDepth;     // r = depth / maxDepth, g = blurred carve mask
 uniform vec2 uArt;            // art size mm
-uniform vec2 uTexel;          // 1/texture size
 uniform float uMaxDepth;
-uniform float uEdge;          // depth iso-level of the cut line
 uniform int uPart;            // 0 board top, 1 board sides, 2 fill overpour mesh
 uniform int uMode;            // 0 none, 1 epoxy, 2 inlay, 3 reverse inlay, 4 char
+uniform bool uFlat;           // top drawn flat (flush fills)
+uniform float uOver;          // how proud the unsanded fill stands, mm
+varying vec3 vBoard;
+vec2 tex(vec2 uv){
+  if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return vec2(0.0);
+  return texture2D(uDepth, uv).rg;
+}
+// unsanded fill surface height (board mm, 0 = board top): epoxy overpour bulge with meniscus spill, or a proud inlay plug.
+// Points well under the board top drop below it, where the board hides them.
+varying float vHide;
+float fillH(vec2 p){
+  vec2 t = tex(p / uArt); float d = t.r * uMaxDepth, b = t.g;
+  if (uMode == 1){
+    float h = uOver * smoothstep(0.02, 0.55, b);
+    return max(h, -d + 0.02) + ((h < 0.03 && d < 0.02) ? -0.5 : 0.0);
+  }
+  return d > 0.02 ? uOver : -0.6;
+}
+`;
+
+export const PARS = /* glsl */`
+uniform vec2 uTexel;          // 1/texture size
+uniform float uStep;          // grid step mm (fill normals)
+uniform float uEdge;          // depth iso-level of the cut line
 uniform bool uSanded;
-uniform bool uFlat;           // top drawn as a flat plane (flush fills)
 uniform vec4 uWood[14];       // 2 species x 7 vec4
 uniform vec4 uFinish;         // darken, sat, rough add, coat
 uniform float uFinishCoatRough;
@@ -24,7 +46,9 @@ uniform float uFillRough;
 uniform float uCharScale;
 uniform vec3 uKeyDir;         // world dir to key light
 uniform vec3 uOrigin;         // world position of the art's top-left corner on the board top
-varying vec3 vBoard;
+uniform sampler2D uBakeA;     // baked wood of the board top & carve (rgb = albedo * 0.75, a = roughness), mipmapped
+uniform sampler2D uBakeB;     // baked insert wood for inlays (flat)
+uniform vec4 uBakeRect;       // board mm covered by the bakes: x0, z0, width, height
 
 float sSpec; vec3 sAlb; float sRough; float sMetal; float sCoat; float sCoatRough; vec3 sEmis; vec3 sN; float sAO; bool sOverrideN;
 
@@ -60,6 +84,7 @@ float aaFade(float coordFw, float freq){ return 1.0-smoothstep(0.18,0.55,coordFw
 
 vec4 W(int k,int i){ return uWood[k*7+i]; }
 
+#if CARVE_PART == 1 || defined(CARVE_BAKE)
 // solid wood: tree axis along x, pith ~260 mm under the board, slightly tilted for cathedrals
 vec3 wood(vec3 p, int k, out float rough){
   vec4 c0=W(k,0), c1=W(k,1), c2=W(k,2), c3=W(k,3), c4=W(k,4), c5=W(k,5), c6=W(k,6);
@@ -116,11 +141,24 @@ vec3 wood(vec3 p, int k, out float rough){
   // limed: white paste in the open grain + a whitewash over everything
   col = mix(col, vec3(0.86,0.84,0.80), limed*0.16);
   // fine fibre noise so flats never look like plastic
+#ifndef CARVE_BAKE
   float fib = snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
   col *= 1.0 + fib*0.035;
+#endif
   rough = baseRough + pores*0.12 + ribbon*0.06*rib;
   return max(col, vec3(0.0));
 }
+#endif
+
+// finest fibre noise (~9 cycles/mm) stays live so close-ups keep their tooth; everything coarser is baked
+float fibre(vec3 p, int k){
+  p += vec3(float(k)*173.0, 0.0, float(k)*61.0);
+  float fwz = length(vec2(dFdx(p.z),dFdy(p.z))) + length(vec2(dFdx(p.y),dFdy(p.y)))*0.5 + 1e-5;
+  return 1.0 + 0.035 * snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
+}
+const float BAKE_SCALE = 1.0/0.75;
+vec4 bakeA(vec2 xz){ vec4 t = texture2D(uBakeA, (xz - uBakeRect.xy) / uBakeRect.zw); return vec4(t.rgb*BAKE_SCALE, t.a); }
+vec4 bakeB(vec2 xz){ vec4 t = texture2D(uBakeB, (xz - uBakeRect.xy) / uBakeRect.zw); return vec4(t.rgb*BAKE_SCALE, t.a); }
 
 vec3 applyFinish(vec3 c){
   float l = dot(c, vec3(0.2126,0.7152,0.0722));
@@ -131,10 +169,6 @@ vec3 applyFinish(vec3 c){
 float depthAt(vec2 uv){
   if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return 0.0;
   return texture2D(uDepth, uv).r * uMaxDepth;
-}
-vec2 tex(vec2 uv){
-  if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return vec2(0.0);
-  return texture2D(uDepth, uv).rg;
 }
 // surface normal of the carved top from the depth map (world frame, y up)
 vec3 carveNormal(vec2 uv){
@@ -173,6 +207,7 @@ vec3 charSurface(vec3 p, float thin, out float rough){
   return col;
 }
 
+#ifndef CARVE_BAKE
 // fill: flush (top at y=0) or overpour (top at vBoard.y); returns albedo, sets material globals
 vec3 fillSurface(vec3 P, float thick, vec3 Vw){
   vec3 col = uFillColor;
@@ -200,7 +235,7 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
     hit = P.xz + T.xz * L;
     float d2 = depthAt(hit/uArt);
     L = max(topY + d2, 0.0) / ty;
-    float fr; vec3 floorW = applyFinish(wood(vec3(hit.x, -d2, hit.y), 0, fr)) * 0.82;
+    vec3 floorW = applyFinish(bakeA(hit).rgb) * 0.82;          // the baked carve floor seen through the resin
     vec3 nF = carveNormal(hit/uArt);
     float lam = 0.35 + 0.65*max(dot(nF, normalize(uKeyDir)), 0.0);
     floorW *= lam * (1.0 - 0.35*smoothstep(0.0,uMaxDepth,d2));
@@ -225,21 +260,25 @@ void surface(){
   vec3 Vw = normalize(P + uOrigin - cameraPosition);
   sMetal = 0.0; sCoat = uFinish.w; sCoatRough = uFinishCoatRough; sEmis = vec3(0.0); sAO = 1.0; sOverrideN = true; sSpec = 1.0;
   sN = vec3(0.0,1.0,0.0);
+#if CARVE_PART == 1
+  // board edges and underside: live solid wood (small on screen)
   float wr;
-  if (uPart == 1){ // board edges and underside: same solid wood
-    sAlb = applyFinish(wood(P, uMode==3 ? 1 : 0, wr)); sRough = clamp(wr + uFinish.z + 0.04, 0.05, 1.0); sOverrideN = false;
-    if (uMode == 4 && !uSanded) { sAlb = charSurface(P, 0.0, sRough); sCoat = 0.0; }
-    return;
+  sAlb = applyFinish(wood(P, uMode==3 ? 1 : 0, wr)); sRough = clamp(wr + uFinish.z + 0.04, 0.05, 1.0); sOverrideN = false;
+  if (uMode == 4 && !uSanded) { sAlb = charSurface(P, 0.0, sRough); sCoat = 0.0; }
+#elif CARVE_PART == 2
+  if (vHide > 0.999) discard;   // triangles wholly under the board top are not part of the pour
+  // proud fill before sanding (epoxy overpour / inlay plug); normal from the same height the GPU displaced to
+  float e = uStep;
+  float hx = fillH(P.xz + vec2(e, 0.0)) - fillH(P.xz - vec2(e, 0.0));
+  float hz = fillH(P.xz + vec2(0.0, e)) - fillH(P.xz - vec2(0.0, e));
+  sN = normalize(vec3(-hx / (2.0*e), 1.0, -hz / (2.0*e)));
+  if (uMode == 2 || uMode == 3){
+    vec4 B = bakeB(P.xz);
+    sAlb = B.rgb * fibre(P, uMode==2 ? 1 : 0) * 0.97; sRough = B.a + 0.18; sCoat = 0.0;
+  } else {
+    sAlb = fillSurface(P, P.y + d, Vw);
   }
-  if (uPart == 2){ // proud fill before sanding (epoxy overpour / inlay plug)
-    sOverrideN = false;
-    if (uMode == 2 || uMode == 3){
-      sAlb = wood(P, uMode==2 ? 1 : 0, wr) * 0.97; sRough = wr + 0.18; sCoat = 0.0;
-    } else {
-      sAlb = fillSurface(P, P.y + d, Vw);
-    }
-    return;
-  }
+#else
   float fwd = max(fwidth(d), 1e-4);
   float cov = smoothstep(-fwd, fwd, d - uEdge);          // 1 inside the carve
   float lineW = smoothstep(fwd*2.5, 0.0, abs(d - uEdge)); // the cut line itself
@@ -247,11 +286,11 @@ void surface(){
   sN = nC;
   float yy = uFlat ? 0.0 : -d;
   vec3 Pw = vec3(P.x, yy, P.z);
-  bool flushFill = uFlat && (uMode==1 || uMode==2 || uMode==3);
 
-  // base wood (top face / carved faces)
-  vec3 woodTop = applyFinish(wood(Pw, uMode==3 ? 1 : 0, wr));
-  float rTop = clamp(wr + uFinish.z, 0.05, 1.0);
+  // base wood (top face / carved faces): baked at the carved height, live fibre on top
+  vec4 A = bakeA(P.xz);
+  vec3 woodTop = applyFinish(A.rgb * fibre(vec3(P.x, -d, P.z), uMode==3 ? 1 : 0));
+  float rTop = clamp(A.a + uFinish.z, 0.05, 1.0);
 
   if (uMode == 0 || (!uFlat && uMode != 4)){
     // raw carve: cut faces slightly duller, end grain (walls across the fibres) darker, cavity AO
@@ -291,13 +330,40 @@ void surface(){
     return;
   }
   // wood inlay / reverse inlay (reverse: insert species is the field, base species shows the design)
-  float ir; vec3 ins = applyFinish(wood(vec3(P.x,0.0,P.z), uMode==2 ? 1 : 0, ir));
+  vec4 B = bakeB(P.xz);
+  vec3 ins = applyFinish(B.rgb * fibre(vec3(P.x, 0.0, P.z), uMode==2 ? 1 : 0));
   vec3 fieldW = woodTop;
   float glue = lineW * 0.38;
   sAlb = mix(fieldW, ins, cov) * (1.0 - glue);
-  sRough = mix(rTop, clamp(ir+uFinish.z,0.05,1.0), cov);
+  sRough = mix(rTop, clamp(B.a+uFinish.z,0.05,1.0), cov);
+#endif
 }
+#endif
+
+// bake pass: one full-screen quad evaluates the solid-wood shader once per texel of the board top
+#ifdef CARVE_BAKE
+uniform int uBakeK;
+uniform bool uBakeFlat;
+varying vec2 vUv;
+void bakeMain(){
+  vec2 P = uBakeRect.xy + vUv * uBakeRect.zw;
+  float d = uBakeFlat ? 0.0 : tex(P / uArt).r * uMaxDepth;
+  float r; vec3 c = wood(vec3(P.x, -d, P.y), uBakeK, r);
+  gl_FragColor = vec4(c * 0.75, clamp(r, 0.0, 1.0));
+}
+#endif
 `;
 
-export const VERT_PARS = `varying vec3 vBoard;\n`;
-export const VERT_MAIN = `vBoard = transformed;\n`;
+export const BAKE_VERT = /* glsl */`
+varying vec2 vUv; varying vec3 vBoard;
+void main(){ vUv = uv; vBoard = vec3(0.0); gl_Position = vec4(position.xy, 0.0, 1.0); }
+`;
+export const BAKE_FRAG = () => '#define CARVE_BAKE\n#define CARVE_PART -1\n' + COMMON + PARS + '\nvoid main(){ bakeMain(); }\n';
+
+// vertex: the grids are flat and built once; the carve is displaced here from the depth texture (GPU, no mesh rebuilds)
+export const VERT_MAIN = /* glsl */`
+if (uPart == 0 && !uFlat) transformed.y = -tex(transformed.xz / uArt).r * uMaxDepth;
+vHide = 0.0;
+if (uPart == 2){ transformed.y = fillH(transformed.xz); vHide = transformed.y > 0.015 ? 0.0 : 1.0; }
+vBoard = transformed;
+`;
