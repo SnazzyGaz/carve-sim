@@ -1,0 +1,30 @@
+[
+ {
+  "path": "samples/bald-eagle.jpg",
+  "label": "Bald eagle"
+ },
+ {
+  "path": "samples/biomech-sculpture.jpg",
+  "label": "Biomech sculpture"
+ },
+ {
+  "path": "samples/howling-wolf.jpg",
+  "label": "Howling wolf"
+ },
+ {
+  "path": "samples/old-fisherman.jpg",
+  "label": "Old fisherman"
+ },
+ {
+  "path": "samples/red-deer-stag.jpg",
+  "label": "Red deer stag"
+ },
+ {
+  "path": "samples/tall-ship.jpg",
+  "label": "Tall ship"
+ },
+ {
+  "path": "samples/vintage-motorcycle.jpg",
+  "label": "Vintage motorcycle"
+ }
+]
