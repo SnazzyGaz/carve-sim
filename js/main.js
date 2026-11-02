@@ -237,7 +237,7 @@ function showError(title, text) {
 function hideError() { $('#stageMsg').classList.add('hidden'); }
 $('#smClose').onclick = hideError;
 $('#smHelp').onclick = (e) => { e.preventDefault(); $('#smHelpText').classList.toggle('hidden'); };
-$('#smSample').onclick = (e) => { e.preventDefault(); hideError(); const b = $('#samples button'); if (b) app.loadPath(b.dataset.p); };
+$('#smSample').onclick = (e) => { e.preventDefault(); hideError(); const b = $('#samples button'); if (b) b.click(); };
 let toastT = 0, toastUrl = null;
 function toast(html, ms = 3500, url = null) {
   const t = $('#toast'); t.innerHTML = html; t.classList.remove('hidden'); clearTimeout(toastT);
@@ -339,12 +339,14 @@ function showStats(job, doc) {
   $('#warns').innerHTML = '';
 }
 
+// the material look the app starts with (before any sample or user change), restored when a sample is picked
+const START_LOOK = Object.fromEntries(LOOK_M.map((k) => [k, viewer.state[k]]));
 // samples: the first load shows the bundled sample so the board is never empty (?nosample skips it, for tests)
 fetch('samples/index.json').then((r) => r.json()).then((list) => {
   $('#samples').innerHTML = list.map((s) => `<button data-p="${s.path}" title="${s.path}">${s.label}</button>`).join('');
   // a sample may carry a "look" (board, fill, sanded...) it was designed for, e.g. an inverted design meant for a pale
-  // fill in a dark board; it is applied once on load and can be changed freely afterwards
-  const loadSample = (s) => app.loadPath(s.path).then(() => { if (s.look) app.set({ material: s.look }); });
+  // fill in a dark board. Picking a sample starts from the app's startup look plus its own, so nothing carries over.
+  const loadSample = (s) => app.loadPath(s.path).then(() => app.set({ material: { ...START_LOOK, ...s.look } }));
   $$('#samples button').forEach((b, i) => b.onclick = () => loadSample(list[i]));
   const d = list.find((s) => s.default) || list[0];
   if (d && !qs.has('nosample') && !app.doc) loadSample(d);
