@@ -185,3 +185,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,.drop:focus-within
 .toast{position:absolute;left:50%;top:58px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#1a1918f0;border:1px solid var(--line);border-radius:10px;padding:8px 14px;color:#ece8e2;font-size:12.5px;box-shadow:0 6px 24px #0008;z-index:6;max-width:calc(100% - 40px)}
 .toast img{height:40px;border-radius:4px;box-shadow:0 1px 4px #000a}
 .traceLink{color:#9a958f;font-size:12px;margin-top:8px}
+
+/* Desktop app (Tauri): WebKitGTK draws native selects with a light GTK theme, so draw our own arrow instead. */
+.desktop{color-scheme:dark}
+.desktop select{-webkit-appearance:none;appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a39d96' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 7px center;background-size:9px 6px}
