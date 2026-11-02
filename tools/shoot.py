@@ -1,11 +1,12 @@
 """Headless renders of the app (Playwright + Chromium with GPU-less WebGL via SwiftShader/ANGLE).
-usage: python3 tools/shoot.py <art path relative to the app, e.g. samples/old-fisherman.jpg> <out dir> '<json list of shots>' [base url]
+usage: python3 tools/shoot.py <art path relative to the app, e.g. samples/old-fisherman.svg (an image goes through the tracer)> <out dir> '<json list of shots>' [base url]
 (default base url http://127.0.0.1:8766/ = `python3 -m http.server 8766` in app/)
-shot: {"name":..., "material":{...}, "light":{...}, "view":"angle"|..., "close":[u,v], "ui":true}
+shot: {"name":..., "bake":{carve/vbit_angle/depth/width_mm...}, "material":{...}, "light":{...}, "view":"angle"|..., "close":[u,v], "ui":true}
 """
 import json, sys, time, asyncio
 BASE = sys.argv[4] if len(sys.argv) > 4 else 'http://127.0.0.1:8766/'
 from playwright.async_api import async_playwright
+if '?' not in BASE: BASE += '?nosample&nosw'
 
 async def main(art, outdir, shots, w=1600, h=1000):
     async with async_playwright() as p:
@@ -22,6 +23,8 @@ async def main(art, outdir, shots, w=1600, h=1000):
         await pg.evaluate('app.ready()')
         print('loaded+traced in', round(time.time() - t, 1), 's', flush=True)
         for s in shots:
+            if s.get('bake'):
+                await pg.evaluate(f'app.setBake({json.dumps(s["bake"])})')
             await pg.evaluate(f'app.set({json.dumps({k: s[k] for k in ("material", "light", "view", "close") if k in s})})')
             if s.get('tab'):
                 await pg.click(f'.tabs>button[data-tab="{s["tab"]}"]')

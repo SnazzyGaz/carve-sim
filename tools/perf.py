@@ -1,5 +1,5 @@
 """Before/after performance probe for the 3D viewer and the engine (headless Chromium, SwiftShader).
-usage: python3 tools/perf.py <base url> <label> [out.json]
+usage: [ART=samples/x.svg] python3 tools/perf.py <base url> <label> [out.json]
 SwiftShader renders on the CPU, so ms here are only comparable between builds on this box, not real-GPU FPS.
 The structural numbers (draw calls, triangles, shader size, texture memory, main-thread blocking) are what carry over."""
 import asyncio, json, sys, time
@@ -7,7 +7,9 @@ from playwright.async_api import async_playwright
 
 BASE, LABEL = sys.argv[1], sys.argv[2]
 OUT = sys.argv[3] if len(sys.argv) > 3 else None
-ART = 'samples/old-fisherman.jpg'
+import os
+ART = os.environ.get('ART', 'samples/old-fisherman.svg')   # ART=samples/old-fisherman.jpg for builds before the SVG showroom
+if '?' not in BASE: BASE += '?nosample&nosw'   # tests start from an empty board and bypass the offline cache
 
 INIT = r'''
 (() => {
@@ -191,15 +193,22 @@ async def main():
             R['change'][name] = await change(js); print(time.strftime('%H:%M:%S'), name, R['change'][name], flush=True)
         save('change')
         await pg.evaluate("app.set({material:{fill:'none'}, light:{light:'studio'}})"); await wait_idle(pg)
-        t = await pg.evaluate('performance.now()')
-        await pg.evaluate("(() => { const i = document.querySelector('.slider[data-k=\"threshold\"] input'); i.value = 140; i.dispatchEvent(new Event('input')); })()")
-        await pg.wait_for_timeout(300)
-        await pg.wait_for_function("(t) => !document.querySelector('#busy:not(.hidden)') && app.traced && app.traced.params && String(app.traced.params.threshold) === '140'", arg=t, timeout=180000)
+        if await pg.evaluate("!!document.querySelector('.slider[data-k=\"threshold\"] input')"):   # trace builds: live retrace
+            t = await pg.evaluate('performance.now()')
+            await pg.evaluate("(() => { const i = document.querySelector('.slider[data-k=\"threshold\"] input'); i.value = 140; i.dispatchEvent(new Event('input')); })()")
+            await pg.wait_for_timeout(300)
+            await pg.wait_for_function("(t) => !document.querySelector('#busy:not(.hidden)') && app.traced && app.traced.params && String(app.traced.params.threshold) === '140'", arg=t, timeout=180000)
+            key = 'threshold_slider'
+        else:   # SVG showroom: a bake setting (bit angle) re-bakes the depth in the worker
+            t = await pg.evaluate('performance.now()')
+            await pg.evaluate("app.setBake({vbit_angle: 90})")
+            key = 'rebake_vbit_angle'
         await wait_idle(pg)
         d = await pg.evaluate('(t) => { const f = window.__frames; return f[f.length-1].t + f[f.length-1].ms - t; }', t)
         lt = await pg.evaluate('(t0) => window.__long.filter(l => l[0] >= t0)', t)
-        R['threshold_slider'] = {'to_traced_frame_ms': round(d), 'longtasks': len(lt), 'longtask_total_ms': round(sum(l[1] for l in lt)), 'longtask_max_ms': round(max([l[1] for l in lt] or [0]))}
-        save('threshold_slider')
+        R[key] = {'to_frame_ms': round(d), 'longtasks': len(lt), 'longtask_total_ms': round(sum(l[1] for l in lt)), 'longtask_max_ms': round(max([l[1] for l in lt] or [0]))}
+        if key == 'rebake_vbit_angle': R[key]['job'] = await pg.evaluate('({bake_ms: app.job.bake_ms, first_frame_ms: app.job.first_frame_ms, worker_ms: app.job.worker_ms})')
+        save(key)
         R['gpu'] = await pg.evaluate(STATS)
         save('gpu')
         R['errors'] = [l for l in logs if 'error' in l.lower()][:8]

@@ -1,5 +1,5 @@
 """Where does the 3D viewer's lag come from? Per-source probe, run against two builds on the same box.
-usage: python3 tools/lag.py <base url> <label> [out.json]
+usage: [ART=samples/x.svg] python3 tools/lag.py <base url> <label> [out.json]
 Headless Chromium + SwiftShader (CPU WebGL): absolute ms are much slower than a real GPU; compare builds, not FPS.
 Probes: slider drags (exposure, ambient, key, light direction), orbit drag, species switch (wood bake), finish switch,
 fill switches incl. the first switch to a glow resin (bloom), and the per-frame cost of bloom once it is on."""
@@ -7,7 +7,9 @@ import asyncio, json, sys, time
 from playwright.async_api import async_playwright
 BASE, LABEL = sys.argv[1], sys.argv[2]
 OUT = sys.argv[3] if len(sys.argv) > 3 else None
-ART = 'samples/old-fisherman.jpg'
+import os
+ART = os.environ.get('ART', 'samples/old-fisherman.svg')   # ART=samples/old-fisherman.jpg for builds before the SVG showroom
+if '?' not in BASE: BASE += '?nosample&nosw'   # tests start from an empty board and bypass the offline cache
 HOOK = r'''() => {
   const v = app.viewer, r = v.renderer, gl = r.getContext(); window.__f = []; r.info.autoReset = false; const px = new Uint8Array(4);
   const orig = v.render.bind(v);

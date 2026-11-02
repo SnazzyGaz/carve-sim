@@ -1,8 +1,10 @@
-# Carve Sim (web)
+# Carve Sim (web) · SVG showroom
 
-Drop in black-and-white artwork (PNG/JPG) or an existing SVG, tune the trace live, check it against your bit, then see the carve in 3D in real wood, with epoxy, inlay or charred fills.
+Drop in a finished CNC SVG, such as one from the CNC vector skill (`cnc_vector.py`), and see it carved in 3D: V-carve, pockets, stepped pocket levels and engrave lines, in real wood, with epoxy, inlay or charred fills.
 
-It all runs in your browser. There's no server, no install and no account, and nothing gets uploaded: the image-to-SVG trace (OpenCV + potrace) runs in a Web Worker on your own machine, and every library is bundled in `app/vendor/`, so it makes no CDN calls.
+Import an SVG and the board appears within about 2 s. The SVG's physical size (mm or in) sets the board size, and its layer ids and metadata set the carve. Bit angle, depths and board size are import settings, and each change re-bakes once in a worker. The old image-to-SVG tracer (OpenCV + potrace) is still available as a collapsed side panel, "Trace an image instead". It loads only when you open it and outputs an SVG that goes straight into the showroom. See [docs/showroom.md](docs/showroom.md) for exactly how SVGs are interpreted.
+
+It all runs in your browser. There's no server, no install and no account, and nothing gets uploaded. Every library is bundled in `app/vendor/`, so it makes no CDN calls, and a small service worker keeps the app, the samples and (once opened) the tracer working offline.
 
 ![Fisherman in ash, charred grooves](docs/fisherman-ash.jpg)
 
@@ -11,9 +13,12 @@ It all runs in your browser. There's no server, no install and no account, and n
 ```
 app/                 the whole static site; this is what GitHub Pages publishes
   index.html         entry point (relative paths only, so it works from any sub-path)
-  js/                UI, 3D viewer, shaders, engine.js (main thread) + carve-worker.js (trace engine)
-  vendor/            opencv.js 5.0, potrace-core, three-lite (three.js r187 trimmed to what's used)
-  samples/           sample artwork + index.json
+  sw.js              offline cache (service worker; ?nosw bypasses it)
+  js/                main.js (UI), viewer.js + shader.js + materials.js (3D), svg-import.js (SVG parsing),
+                     svg-worker.js (SVG -> depth bake), bake-lib.js (shared EDT / texture helpers),
+                     trace-panel.js + engine.js + carve-worker.js (the lazy image tracer)
+  vendor/            three-lite (three.js r187 trimmed to what's used); opencv.js 5.0 + potrace-core (tracer only)
+  samples/           sample SVGs (fisherman, eagle, 3-level wolf pocket, stag engrave) + the tracer's sample photo
 desktop/             (future) Electron or Tauri wrapper for the Windows installer; loads app/ unchanged
 tools/               build-vendor.mjs, parity and screenshot scripts (dev only, not deployed)
 docs/pages-workflow.yml  optional Actions workflow to publish app/ (copy to .github/workflows/pages.yml)
@@ -23,7 +28,7 @@ Same pattern as Relief Forge: a static web app on GitHub Pages first, and later 
 
 ## Run it locally
 
-Any static file server will do. The page uses a module Web Worker, so it won't run from a double-clicked `file://`.
+Any static file server will do (`python3 tools/serve_gz.py app 8766` also serves gzip). The page uses Web Workers and a service worker, so it won't run from a double-clicked `file://`.
 
 ```
 cd app && python3 -m http.server 8766     # then open http://127.0.0.1:8766/
@@ -51,9 +56,9 @@ npm run vendor      # node tools/build-vendor.mjs
 
 This scans `app/js` for the `THREE.*` names in use and bundles only those, plus six addons (OrbitControls, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass), into `three-lite.min.js` (595 KB, 147 KB gzipped; the Python version vendors 17 MB of three.js). It also rebuilds `potrace-core.min.js` and copies `opencv.js`.
 
-## How the trace matches the Python version
+## How the tracer matches the Python version
 
-The engine (`app/js/carve-worker.js`) is a line-by-line port of the Python Carve Sim / `cnc_vector.py` pipeline:
+The tracer engine (`app/js/carve-worker.js`) is a line-by-line port of the Python Carve Sim / `cnc_vector.py` pipeline:
 
 - the same OpenCV version (5.0) and the same calls: resize, CLAHE, bilateral, threshold, morphology, connected components, distance transform
 - potrace with a decomposition rewritten to follow potracer step for step
@@ -87,10 +92,11 @@ The 3D view displaces a static grid on the GPU from the depth texture, bakes the
 
 ## Known gaps
 
-- OpenCV is the stock build (kept whole so the trace stays byte-identical), split into a 128 KB loader and an 11.96 MB `opencv.wasm` (3.5 MB gzipped). It loads lazily in the worker with a progress bar; after the first visit it comes from the browser cache. A custom minimal build would be smaller.
+- Showroom depth is a model of the carve, not a toolpath simulation: the V-carve uses the distance to the nearest edge (an ideal V-bit with a depth limit), so sharp inside corners come out perfectly sharp; pockets have no end-mill corner radius; no clearing tool or step-over is modelled. The texture is 2048 texels on the long side (≈0.15 mm/texel at 300 mm), so detail finer than that (and strokes under ~0.3 mm) is averaged away.
+- Generic (non-CNC) SVGs are drawn by the browser on the main thread and thresholded at mid-grey: colours carve by brightness, and anti-aliased or semi-transparent art can carve a little differently from what the CAM software would make of the paths.
+- A px/unitless SVG has no physical size, so it is shown 300 mm wide; set **Board width** to the real size.
+- OpenCV (tracer only) is the stock build (kept whole so the trace stays byte-identical), split into a 128 KB loader and an 11.96 MB `opencv.wasm` (3.5 MB gzipped). It is not loaded until the trace panel is opened.
 - The baked wood texture is 4096 texels on the board's long side, about 12 texels/mm on a 300 mm piece. On very large boards it gets softer in extreme close-ups (the live fibre noise hides most of it). The board's edges still use the live wood shader.
-- SVGs that aren't already CNC output get rasterised on the main thread (3000 px longest side) before the trace, so their numbers can differ slightly from the Python version, which uses resvg.
-- The canvas antialiasing in the 2D previews is a touch different from resvg's (IoU 0.99+).
-- In the stats JSON export, whole numbers print as `300` instead of `300.0`.
-- Pocket mode in 3D has flat floors and straight walls, with no end-mill corner radius. Bloom only shows for glow epoxy, and the pre-sand inlay plug is simplified.
+- The tracer's canvas antialiasing in its 2D previews is a touch different from resvg's (IoU 0.99+).
+- Bloom only shows for glow epoxy, and the pre-sand inlay plug is simplified.
 - It needs a recent browser (Path2D and OffscreenCanvas in workers, CompressionStream): Chrome/Edge 80+, Firefox 105+, Safari 16.4+.

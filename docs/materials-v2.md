@@ -70,7 +70,7 @@ The Relief Forge 2.0.6/2.0.7 material work, ported to Carve Sim's GPU-displaced 
 - **Sway** (Forge's turntable) turns the board slowly to and fro, ±0.38 rad about the vertical axis with Forge's 2.6 s time constant. The camera, lights, environment and floor stay put. The shaders work in board millimetres, so the camera position, key direction and normal rotation are passed in the board frame each frame (three uniforms). The shadow is redrawn every frame while it sways.
 - Draft quality during drags is unchanged.
 
-## Toward the SVG showroom (not built)
+## Toward the SVG showroom (now built on branch `showroom`; see [showroom.md](showroom.md))
 
 Here's what would change if Carve Sim becomes an import-and-bake showroom, with all editing done outside:
 
@@ -78,3 +78,5 @@ Here's what would change if Carve Sim becomes an import-and-bake showroom, with 
 - **Bake once per import:** the depth texture, AO (`aoTexture`) and LOD grids are computed once. Then the progressive 4096 wood bake only reruns on species or inlay changes. The trace/edit re-bake paths (threshold slider → retrace → setDepth) stop being hot paths.
 - **UI:** keep the woods, fills, finishes, lighting and views panel. Drop the trace/edit controls. Add a material-comparison mode (presets, A/B) and a high-res export.
 - **Viewer:** `viewer.js` can mostly stay as it is. `setDepth` becomes import-only. Worth caching the baked wood per species for that one carve, so flipping between species is instant after the first visit.
+
+Built as planned, with one change: the tracer was kept (lazy, collapsed, one-off bake) instead of deleted. The wood bake is cached per species (LRU, up to 3 boards at 4096², ~270 MB GPU), so switching back to a species you have already seen is a cache hit (~25–30 ms instead of a full 17-step re-bake).

@@ -1,0 +1,67 @@
+// "Trace an image instead": a one-off bake from a black & white image to a CNC SVG, which then opens in the showroom
+// like any imported SVG. Loaded on demand (dynamic import) the first time the panel opens; the engine, its worker and
+// OpenCV (self-hosted in vendor/, ~12 MB) only start then. No live retrace: a few fixed choices and one Trace button.
+import { Engine, revoke } from './engine.js';
+
+// image-type presets -> the tracer's parameters (same meaning as the CNC skill's cnc_vector.py flags)
+const PRESETS = {
+  line:  { threshold: '128',  smooth: 0.8, min_feature: 0.5 },   // clean black & white line art (the skill's default)
+  bold:  { threshold: 'auto', smooth: 1.6, min_feature: 1.0 },   // chunky stencil shapes, small specks dropped
+  photo: { threshold: 'auto', smooth: 2.0, min_feature: 0.8 },   // shaded / photographic sources: Otsu split, more denoise
+  fine:  { threshold: '128',  smooth: 0.4, min_feature: 0.3 },   // keep hairlines (needs a fine V-bit)
+};
+
+export function initTrace({ $, seg, settings, setStatus, onSvg }) {
+  const engine = new Engine();
+  let img = null, mode = 'vcarve', last = null;
+  const bar = $('#tBar'), note = (t) => ($('#tStatus').textContent = t);
+  engine.onprogress = (loaded, total) => {
+    const p = Math.min(100, Math.round(loaded / total * 100));
+    bar.classList.toggle('hidden', p >= 100); bar.firstElementChild.style.width = p + '%';
+    note(p < 100 ? `Loading the tracer… ${p}%` : (img ? 'Tracer ready.' : 'Tracer ready: pick an image.'));
+  };
+  note('Loading the tracer…');
+  engine.warm().catch((e) => { console.error(e); note('Could not load the tracer: ' + e.message); });
+
+  const drop = $('#tDrop');
+  const setImage = (blob, name) => {
+    img = { blob, name };
+    const t = $('#tThumb'); if (t.src) URL.revokeObjectURL(t.src); t.src = URL.createObjectURL(blob); drop.classList.add('has');
+    $('#btnTrace').disabled = false; note(`${name} · press Trace`);
+  };
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) setImage(f, f.name); });
+  $('#tFileIn').onchange = (e) => { const f = e.target.files[0]; if (f) setImage(f, f.name); e.target.value = ''; };
+  $('#tSample').onclick = async (e) => { e.preventDefault(); e.stopPropagation(); const r = await fetch('samples/old-fisherman.jpg'); setImage(await r.blob(), 'old-fisherman.jpg'); };
+  seg('#tMode', (v) => { mode = v; });
+
+  async function trace() {
+    if (!img) return;
+    const btn = $('#btnTrace'); btn.disabled = true; $('#btnSvg').disabled = true;
+    const t0 = performance.now(); setStatus('busy', 'Tracing…'); note(engine.cvReady ? 'Tracing…' : 'Loading the tracer, then tracing…');
+    try {
+      const preset = PRESETS[$('#tPreset').value] || PRESETS.line;
+      const params = { ...preset, mode, invert: $('#tInvert').checked, width_mm: settings.width_mm || 300,
+        vbit_angle: settings.vbit_angle, depth: mode === 'pocket' ? settings.pocket_depth : settings.depth };
+      const info = await engine.load(img.blob, img.name);
+      const out = await engine.process(info.id, params, true);
+      URL.revokeObjectURL(info.thumbUrl);
+      if (!out || !out.svg) throw new Error('the tracer returned no SVG');
+      if (last) revoke(last.urls);
+      const name = `${img.name.replace(/\.[^.]+$/, '')}_${mode}_${Math.round(params.width_mm)}mm.svg`;
+      last = { urls: out.urls, svg: out.svg, name };
+      const s = out.res.stats;
+      note(`Traced in ${((performance.now() - t0) / 1000).toFixed(1)} s · ${s.paths} paths, ${s.nodes ?? '?'} nodes. Opened below as ${name}.`);
+      $('#btnSvg').disabled = false;
+      await onSvg(out.svg, name);
+    } catch (e) { console.error(e); note('Trace failed: ' + e.message); setStatus('err', 'Trace failed'); }
+    finally { btn.disabled = !img; }
+  }
+  $('#btnTrace').onclick = trace;
+  $('#btnSvg').onclick = () => {
+    if (!last) return;
+    const a = document.createElement('a'); a.href = last.urls.svg; a.download = last.name; document.body.appendChild(a); a.click(); a.remove();
+  };
+  return { setImage, trace, engine, get last() { return last; } };
+}

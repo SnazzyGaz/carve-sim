@@ -195,3 +195,23 @@ The box was quiet this time (only the unrelated process, at about 2 cores). perf
 - **Pour level / meniscus / flood drags** are about 0.5–0.6 s per frame on SwiftShader. They're uniforms against the baked depth with no rebake. But the pour surface casts shadows, so each step redraws the shadow map (7 redraws per 6-step drag, the same as the light-direction slider). The first switch to an as-poured epoxy (2.5 s) includes the one-off distance-field bake on the main thread and a shader compile.
 - **Sway** renders full-quality frames with a shadow redraw on every frame (2.2 s/frame on SwiftShader; it's smooth on a real GPU, but it's the heaviest steady state in the app).
 - Threshold → traced is unchanged, which is expected: the trace path wasn't optimised further (SVG-showroom direction).
+
+## SVG showroom (branch `showroom`): import → 3D, vs. the trace build
+
+Same box, headless Chromium + SwiftShader, `tools/perf.py` / `tools/lag.py`, run one after the other: old = 21477b1 tracing `old-fisherman.jpg`, new = showroom importing `old-fisherman.svg` (the same artwork after `cnc_vector.py`). Absolute ms are CPU-WebGL ms; compare the builds, not the FPS.
+
+| | 21477b1 (trace) | showroom (SVG) |
+|---|---|---|
+| cold open (no cache, 50 Mbit/20 ms) → first 3D frame | 7.88 s | 3.63 s |
+| → fully settled (4096 wood bake done) | 13.8 s | 8.79 s |
+| warm import → first 3D frame (in-page, `app.job.first_frame_ms`) | ~15 s | 1.2–2.0 s (fisherman 1.96, eagle 1.40, wolf 1.23, stag 1.41, logo 0.40) |
+| bytes fetched by the default path | 0.52 MB, then OpenCV wasm warm-up (3.5 MB gz) | 0.32 MB (three-lite 145 KB gz + sample SVG 126 KB + ~45 KB JS); no OpenCV / engine / carve-worker |
+| edit → frame | threshold retrace 12.7 s | bit angle re-bake: first frame ~2.0 s (worker remap 0.65 s), settled 5.2 s |
+| GPU texture memory (end of run) | 301.6 MB | 301.4 MB |
+| main-thread JS heap after each of 5 imports | — | 97 MB, flat |
+
+Interaction (lag.py and perf.py `change`/`orbit`): every probe is within run-to-run noise (±15 %) of 21477b1, e.g. orbit drag mean 412 → 355 ms, exposure slider 355 → 352 ms, first glow pour 2122 → 2169 ms, sway 2003 → 1927 ms. One real gain: switching back to a species already seen is a wood-cache hit (lag `species_oak`: 3.9 s settled → 0.93 s, no bake strips).
+
+Worker bake for a 300 mm SVG at 4096² (super-sampled): raster 0.04–0.8 s (engrave strokes are the slowest), distance field ~0.65 s, remap + 2×2 downsample + RG half-float + AO ~0.7 s. Angle/depth/carve-type changes reuse the cached masks and distance fields and only redo the remap.
+
+Caveat: under SwiftShader, a re-bake after a board-size change sometimes takes 3–7 s to settle, almost all of it inside the GPU wood-bake draws (same programs, no shader compile); the worker part stays at ~0.7 s. It varies a lot from run to run (the same vbit change measured 0.76 s and 6.3 s) and the trace build has the same bake path, so it reads as CPU-WebGL contention rather than a regression; worth re-checking on a real GPU.
