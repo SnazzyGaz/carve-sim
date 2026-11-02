@@ -1,6 +1,6 @@
 # Carve Sim (web) · SVG showroom
 
-Drop in a finished CNC SVG, such as one from the CNC vector skill (`cnc_vector.py`), and see it carved in 3D: V-carve, pockets, stepped pocket levels and engrave lines, in real wood, with epoxy, inlay or charred fills.
+Drop in a finished CNC SVG, such as one from the CNC vector skill (`cnc_vector.py`), and see it carved in 3D: V-carve, pockets, stepped pocket levels and engrave lines, in real wood (raw or oiled), with epoxy, inlay or charred fills, under a few lighting set-ups chosen for judging a carve.
 
 Import an SVG and the board appears within about 2 s. The SVG's physical size (mm or in) sets the board size, and its layer ids and metadata set the carve. Bit angle, depths and board size are import settings, and each change re-bakes once in a worker. The old image-to-SVG tracer (OpenCV + potrace) is still available as a collapsed side panel, "Trace an image instead". It loads only when you open it and outputs an SVG that goes straight into the showroom. See [docs/showroom.md](docs/showroom.md) for exactly how SVGs are interpreted.
 
@@ -54,7 +54,7 @@ npm install
 npm run vendor      # node tools/build-vendor.mjs
 ```
 
-This scans `app/js` for the `THREE.*` names in use and bundles only those, plus six addons (OrbitControls, RoomEnvironment, EffectComposer, RenderPass, UnrealBloomPass, OutputPass), into `three-lite.min.js` (595 KB, 147 KB gzipped; the Python version vendors 17 MB of three.js). It also rebuilds `potrace-core.min.js` and copies `opencv.js`.
+This scans `app/js` for the `THREE.*` names in use and bundles only those, plus OrbitControls, into `three-lite.min.js` (566 KB, 140 KB gzipped; the Python version vendors 17 MB of three.js). It also rebuilds `potrace-core.min.js` and copies `opencv.js`.
 
 ## How the tracer matches the Python version
 
@@ -98,5 +98,5 @@ The 3D view displaces a static grid on the GPU from the depth texture, bakes the
 - OpenCV (tracer only) is the stock build (kept whole so the trace stays byte-identical), split into a 128 KB loader and an 11.96 MB `opencv.wasm` (3.5 MB gzipped). It is not loaded until the trace panel is opened.
 - The baked wood texture is 4096 texels on the board's long side, about 12 texels/mm on a 300 mm piece. On very large boards it gets softer in extreme close-ups (the live fibre noise hides most of it). The board's edges still use the live wood shader.
 - The tracer's canvas antialiasing in its 2D previews is a touch different from resvg's (IoU 0.99+).
-- Bloom only shows for glow epoxy (kept tight to the lit resin: high threshold, the two finest blur levels only), and the pre-sand inlay plug is simplified.
+- The pre-sand inlay plug is simplified.
 - It needs a recent browser (Path2D and OffscreenCanvas in workers, CompressionStream): Chrome/Edge 80+, Firefox 105+, Safari 16.4+.

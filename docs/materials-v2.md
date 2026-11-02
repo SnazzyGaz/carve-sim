@@ -50,7 +50,7 @@ The Relief Forge 2.0.6/2.0.7 material work, ported to Carve Sim's GPU-displaced 
 
 **Lighting like Relief Forge 2.0.7**
 - Light panel: Preset, Light direction, Light height, Key strength (0–8), Warmth (−1 cool daylight #bcd4ff … +1 tungsten #ffcf9a, as in Forge), Fill (Forge's cool #c8d8ff directional fill opposite the key, no shadow), Ambient (studio environment), Exposure, Ambient occlusion (**default 25%**), Cast shadows, Backdrop.
-- Presets follow Forge's: Studio, Raking light, Gallery, Overhead flat, Dramatic, Cool daylight, plus Lights down for glow fills. The raking preset has enough fill (0.35) that the hero shot's board edges show their end and side grain.
+- Presets follow Forge's (since trimmed to Studio, Raking, Overhead and Daylight; glow fills were removed, see perf-notes.md). The raking preset has enough fill (0.35) that the hero shot's board edges show their end and side grain.
 - PMREM studio environment follows the key. Soft PCF shadows. The shadow map is still redrawn only when the key's direction moves, shadows are toggled, or the geometry changes (pour shape); never for strength, warmth, fill, ambient, exposure or AO.
 
 **As-poured epoxy (unsanded epoxy fills)**

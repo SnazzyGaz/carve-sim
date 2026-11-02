@@ -1,8 +1,8 @@
 """Where does the 3D viewer's lag come from? Per-source probe, run against two builds on the same box.
 usage: [ART=samples/x.svg] python3 tools/lag.py <base url> <label> [out.json]
 Headless Chromium + SwiftShader (CPU WebGL): absolute ms are much slower than a real GPU; compare builds, not FPS.
-Probes: slider drags (exposure, ambient, key, light direction), orbit drag, species switch (wood bake), finish switch,
-fill switches incl. the first switch to a glow resin (bloom), and the per-frame cost of bloom once it is on."""
+Probes: slider drags (brightness, light direction), orbit drag, species switch (wood bake), finish switch,
+fill switches."""
 import asyncio, json, sys, time
 from playwright.async_api import async_playwright
 BASE, LABEL = sys.argv[1], sys.argv[2]
@@ -65,8 +65,7 @@ async def main():
                     await pg.wait_for_timeout(40)
             return f
         R['slider'] = {}
-        for k, vals in [('exposure', [1.05 + 0.03 * i for i in range(6)]), ('env', [0.55 + 0.04 * i for i in range(6)]),
-                        ('key', [2.1 + 0.1 * i for i in range(6)]), ('az', [210 - 4 * i for i in range(6)])]:
+        for k, vals in [('bright', [1.05 + 0.03 * i for i in range(6)]), ('az', [210 - 4 * i for i in range(6)])]:
             R['slider'][k] = await measure(await drag_slider(k, vals)); save('slider')
         await pg.evaluate("app.set({light:{light:'studio'}})")
         box = await pg.evaluate("(() => { const r = app.viewer.renderer.domElement.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()")
@@ -80,14 +79,10 @@ async def main():
         await pg.evaluate('app.viewer.controls.enableDamping = true')
         R['switch'] = {}
         for name, js in [('species_walnut', "app.set({material:{species:'walnut'}})"), ('species_oak', "app.set({material:{species:'white_oak'}})"),
-                         ('finish_gloss', "app.set({material:{finish:'gloss'}})"),
+                         ('finish_raw', "app.set({material:{finish:'raw'}})"),
                          ('fill_epoxy_clear', "app.set({material:{fill:'epoxy', fillPreset:'clear'}})"),
                          ('fill_metal_gold', "app.set({material:{fillPreset:'gold'}})"),
-                         ('fill_inlay', "app.set({material:{fill:'inlay', insert:'walnut'}})"),
-                         ('fill_glow_first', "app.set({material:{fill:'epoxy', fillPreset:'glow_aqua'}})"),
-                         ('glow_settled_frame', "app.viewer.requestRender(true)"),
-                         ('glow_off', "app.set({material:{fill:'none'}})"),
-                         ('nobloom_settled_frame', "app.viewer.requestRender(true)")]:
+                         ('fill_inlay', "app.set({material:{fill:'inlay', insert:'walnut'}})")]:
             async def f(js=js): await pg.evaluate(js)
             R['switch'][name] = await measure(f); save('switch')
         # as-poured epoxy (materials v2 look pass): level / meniscus are uniforms, flood swaps the pour grid; absent in old builds

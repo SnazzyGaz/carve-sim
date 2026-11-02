@@ -137,8 +137,6 @@ uniform int uFillType;
 uniform vec3 uFillColor;
 uniform vec3 uFillAbsorb;
 uniform vec3 uFillScatter;
-uniform vec3 uGlowColor;
-uniform float uGlow;
 uniform float uFillRough;
 uniform float uCharScale;
 uniform vec3 uKeyDir;         // dir to the key light, in the board frame (the board can sway about y)
@@ -450,11 +448,6 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
     vec3 E = (uKeyShare * eKey * Tl + (1.0 - uKeyShare) * aoAt(hit/uArt) * Ta) / max(uKeyShare * eTop + (1.0 - uKeyShare), 1e-3);
     vec3 tr = exp(-uFillAbsorb * L * 0.55);
     col = floorA * E * tr + uFillScatter * (1.0 - tr);
-    if (uFillType == 3){
-      col = mix(uFillColor, col, 0.25);
-      float k = 1.0 - exp(-L*0.8);
-      sEmis = uGlowColor * uGlow * 0.22 * (0.15 + 0.85*k);   // thin resin glows less (less pigment in the path)
-    }
     sRough = 0.5;
   }
   return col;

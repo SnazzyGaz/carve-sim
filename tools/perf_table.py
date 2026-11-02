@@ -16,7 +16,7 @@ row('Settled full-quality frame', pb['settled_frame']['mean_ms'], pa['settled_fr
 row('Orbit drag frame (p50)', pb['orbit']['p50_ms'], pa['orbit']['p50_ms'])
 row('Orbit drag frame (mean)', pb['orbit']['mean_ms'], pa['orbit']['mean_ms'])
 row('Full frame after releasing orbit', pb['orbit_after_release']['mean_ms'], pa['orbit_after_release']['mean_ms'])
-for k in ('exposure', 'env', 'key', 'az'):
+for k in ('bright', 'az'):
     B, A = lb['slider'].get(k), la['slider'].get(k)
     if B and A:
         row(f'Slider drag "{k}": frame while dragging (mean)', B['during_mean_ms'], A['during_mean_ms'], f"shadow redraws {B['shadow_redraws']} → {A['shadow_redraws']}")

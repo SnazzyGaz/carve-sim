@@ -4,22 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Carve Sim · SVG showroom</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Cpath d=%27M2 9h28v15H2z%27 fill=%27%233a3530%27/%3E%3Cpath d=%27M2 9h9l5 10 5-10h9%27 fill=%27none%27 stroke=%27%23cf9459%27 stroke-width=%272.2%27/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/app.css">
 <!-- three.js trimmed to the modules used (tools/build-vendor.mjs); every import resolves to one local file -->
 <script type="importmap">{
  "imports": {
   "three": "./vendor/three-lite.min.js",
-  "three/addons/controls/OrbitControls.js": "./vendor/three-lite.min.js",
-  "three/addons/postprocessing/EffectComposer.js": "./vendor/three-lite.min.js",
-  "three/addons/postprocessing/RenderPass.js": "./vendor/three-lite.min.js",
-  "three/addons/postprocessing/UnrealBloomPass.js": "./vendor/three-lite.min.js",
-  "three/addons/postprocessing/OutputPass.js": "./vendor/three-lite.min.js"
+  "three/addons/controls/OrbitControls.js": "./vendor/three-lite.min.js"
  }
 }</script>
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark"></span><span class="word">CARVE<b>SIM</b></span><span class="sub">SVG showroom</span></div>
+  <div class="brand"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M2 9h28v15H2z" fill="#3a3530"/><path d="M2 9h9l5 10 5-10h9" fill="none" stroke="#cf9459" stroke-width="2.2" stroke-linejoin="round"/><path d="M11 9l5 10 5-10z" fill="#1c1a18"/></svg><div><div class="word">Carve <b>Sim</b></div><div class="sub">SVG showroom</div></div></div>
   <div class="file" id="fileName">No SVG loaded</div>
   <div class="status" id="status"><i></i><span>Idle</span></div>
   <div class="actions">
@@ -29,8 +26,8 @@
 </header>
 <main class="layout">
   <aside class="panel left">
-    <section>
-      <h3>SVG</h3>
+    <section class="card">
+      <h3>Artwork</h3>
       <label class="drop" id="drop">
         <input type="file" id="fileIn" accept=".svg,image/svg+xml" hidden>
         <img id="thumb" alt="">
@@ -38,16 +35,16 @@
       </label>
       <div class="samples" id="samples"></div>
     </section>
-    <section>
+    <section class="card">
       <h3>Board blank</h3>
       <div class="slider" data-k="margin" data-min="0" data-max="80" data-step="1" data-v="18" data-u="mm" data-label="Board margin" data-scope="board"></div>
       <div class="slider" data-k="thickness" data-min="6" data-max="60" data-step="1" data-v="22" data-u="mm" data-label="Board thickness" data-scope="board"></div>
-      <div class="hint">The carve itself (layers, size, bit, depths) comes from the SVG: it was made for its bit, so the showroom only shows the look. What was read is listed under Job.</div>
+      <div class="hint">Bit, depths and size come from the SVG. These two only change the blank around it.</div>
     </section>
-    <section>
+    <section class="card trace">
       <details id="traceBox">
-        <summary>Trace an image instead</summary>
-        <div class="hint">A one-off: turns a black &amp; white PNG or JPG into a CNC SVG and opens it here. The tracer (OpenCV + potrace, about 12 MB) loads only when this panel is opened, from this site, so it works offline.</div>
+        <summary>No SVG? Trace an image</summary>
+        <div class="hint">Turns a clean black &amp; white PNG or JPG into a CNC SVG and opens it here. The tracer (about 12 MB) loads only when this panel opens. For best results, use the CNC vector skill.</div>
         <label class="drop small" id="tDrop">
           <input type="file" id="tFileIn" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
           <img id="tThumb" alt="">
@@ -61,11 +58,11 @@
         <div class="slider" data-k="t_depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="V-carve max depth" data-scope="trace"></div>
         <div class="slider hidden" data-k="t_pocket" data-min="0.5" data-max="20" data-step="0.1" data-v="6" data-u="mm" data-label="Pocket depth" data-scope="trace"></div>
         <div class="slider" data-k="t_width" data-min="30" data-max="1200" data-step="1" data-v="300" data-u="mm" data-label="Finished width" data-scope="trace"></div>
-        <div class="hint">Used once, when you press Trace, and written into the SVG (size and the skill's metadata line), so the showroom and the downloaded file carry them.</div>
+        <div class="hint">Written into the SVG when you press Trace, so the downloaded file carries them too.</div>
         <button class="btn block primary" id="btnTrace" disabled>Trace</button>
         <div class="bar hidden" id="tBar"><i></i></div>
         <div class="hint" id="tStatus"></div>
-        <button class="btn block ghost" id="btnSvg" disabled>Download SVG</button>
+        <button class="btn block" id="btnSvg" disabled>Download SVG</button>
       </details>
     </section>
   </aside>
@@ -79,13 +76,13 @@
         <button data-view="top" title="Top down">Top</button>
         <button data-view="angle" title="Three-quarter">Angle</button>
         <button data-view="low" title="Low, raking">Low</button>
-        <label class="sway" title="Turntable: the board sways slowly about the vertical axis (camera and lights stay put)"><input type="checkbox" id="sway"> Sway</label>
-        <button data-view="corner" title="Corner detail">Corner</button>
+                <button data-view="corner" title="Corner detail">Corner</button>
         <button data-view="close" title="Close-up on the orbit centre (double-click the board to set it)">Close-up</button>
-        <span class="ab" id="ab" title="Two looks to flip between: changes go to the active letter"><button data-v="A" class="on">A</button><button data-v="B">B</button></span>
+        <button class="swaybtn" id="sway" title="Turntable: the board sways slowly so the light plays across the carve">Sway</button>
+        <span class="ab" id="ab" title="Compare two looks: changes go to the active letter"><button data-v="A" class="on">A</button><button data-v="B">B</button></span>
       </div>
     </div>
-    <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a finished SVG</b><span>It's carved here in 3D in the wood, finish and fill of your choice.</span></div></div></div>
+    <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a finished SVG</b><span>See it carved in the wood and fill you plan to use, before you cut.</span></div></div></div>
     <div class="viewport hidden" id="vp2d">
       <div class="twod">
         <div class="layers"><span class="muted">Baked depth map: white = uncut board, darker = deeper.</span></div>
@@ -96,45 +93,38 @@
   </section>
 
   <aside class="panel right">
-    <section>
+    <section class="card">
+      <h3>Wood</h3>
+      <div class="chips wood" id="species"></div>
+      <div class="row"><label>Finish</label><div class="seg small inline" id="finish"></div></div>
+    </section>
+    <section class="card">
+      <h3>Fill</h3>
+      <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Inlay</button><button data-v="reverse">Reverse</button><button data-v="char">Char</button></div>
+      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div></div>
+      <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species</div><div class="chips wood" id="inserts"></div></div>
+      <div id="fillChar" class="sub hidden"><div class="hint">Light board, grooves torched black, face sanded back clean.</div>
+        <div class="slider" data-k="charScale" data-min="0.4" data-max="3" data-step="0.05" data-v="1.25" data-u="mm" data-label="Char texture" data-scope="view"></div></div>
+      <div class="row" id="sandRow"><label title="Off shows the fill as poured or glued, before the face is sanded">Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
+      <div id="pourCtl" class="sub hidden">
+        <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat)"></div>
+        <div class="row"><label title="Above flush the resin spreads over the board as a thin level coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
+        <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the walls"></div>
+      </div>
+    </section>
+    <section class="card">
+      <h3>Light</h3>
+      <div class="seg" id="lightPreset"></div>
+      <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Direction" data-scope="view"></div>
+      <div class="slider" data-k="bright" data-min="0.5" data-max="1.6" data-step="0.01" data-v="1" data-pct="1" data-label="Brightness" data-scope="view"></div>
+      <div class="row"><label>Shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
+      <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
+      <div class="row"><label title="Fast suits older laptops and integrated graphics. Detail adapts to zoom either way">Detail</label><div class="seg small inline" id="meshRes"><button data-v="512">Fast</button><button data-v="1024" class="on">Fine</button><button data-v="2048">Max</button></div></div>
+    </section>
+    <section class="card" id="cardJob">
       <h3>Job</h3>
       <div class="stats" id="stats"><div class="muted">Load an SVG to see the job.</div></div>
       <div class="warns" id="warns"></div>
-    </section>
-    <section>
-      <h3>Board</h3>
-      <div class="chips wood" id="species"></div>
-      <div class="seg small" id="finish"></div>
-    </section>
-    <section>
-      <h3>Fill</h3>
-      <div class="seg" id="fill"><button data-v="none" class="on">Raw</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Inlay</button><button data-v="reverse">Reverse</button><button data-v="char">Char</button></div>
-      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
-        <div class="slider" data-k="glow" data-min="0" data-max="6" data-step="0.1" data-v="2.2" data-u="" data-label="Glow strength" data-scope="view"></div>
-        <div id="pourCtl">
-          <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level (as poured)" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat; pinned pours stop at flush)"></div>
-          <div class="row"><label title="Above flush the resin spreads over the board as a thin level flood coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
-          <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage &amp; meniscus" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the channel walls"></div>
-        </div></div>
-      <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species</div><div class="chips wood" id="inserts"></div></div>
-      <div id="fillChar" class="sub hidden"><div class="hint">Light board, grooves torched black, face sanded back clean.</div>
-        <div class="slider" data-k="charScale" data-min="0.4" data-max="3" data-step="0.05" data-v="1.25" data-u="mm" data-label="Char cell size" data-scope="view"></div></div>
-      <div class="row" id="sandRow"><label>Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
-    </section>
-    <section>
-      <h3>Light &amp; scene</h3>
-      <div class="row"><label>Preset</label><select id="lightPreset"></select></div>
-      <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Light direction" data-scope="view"></div>
-      <div class="slider" data-k="el" data-min="4" data-max="88" data-step="1" data-v="42" data-u="°" data-label="Light height" data-scope="view"></div>
-      <div class="slider" data-k="key" data-min="0" data-max="8" data-step="0.05" data-v="2.0" data-u="" data-label="Key strength" data-scope="view"></div>
-      <div class="slider" data-k="warm" data-min="-1" data-max="1" data-step="0.01" data-v="0.2" data-u="" data-label="Warmth" data-scope="view" title="Key light colour: cool daylight (−) to warm tungsten (+)"></div>
-      <div class="slider" data-k="fillLight" data-min="0" data-max="2" data-step="0.01" data-v="0.25" data-u="" data-label="Fill" data-scope="view" title="Soft cool light opposite the key: lifts the shadow side and the board edges"></div>
-      <div class="slider" data-k="env" data-min="0" data-max="2" data-step="0.01" data-v="0.5" data-u="" data-label="Ambient" data-scope="view" title="Studio environment (reflections and sky light)"></div>
-      <div class="slider" data-k="exposure" data-min="0.2" data-max="2.5" data-step="0.01" data-v="1" data-u="" data-label="Exposure" data-scope="view"></div>
-      <div class="slider" data-k="ao" data-min="0" data-max="1" data-step="0.01" data-v="0.25" data-pct="1" data-label="Ambient occlusion" data-scope="view" title="Darkens the recesses using occlusion baked from the depth map. 0 = off"></div>
-      <div class="row"><label>Cast shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
-      <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
-      <div class="row"><label>Mesh detail</label><select id="meshRes"><option value="512">Draft</option><option value="1024" selected>Fine</option><option value="2048">Max</option></select></div>
     </section>
   </aside>
 </main>

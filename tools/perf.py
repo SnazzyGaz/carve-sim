@@ -181,13 +181,12 @@ async def main():
         R['change'] = {}
         steps = [
             ('species_walnut', "app.set({material:{species:'walnut'}})"),
-            ('finish_gloss', "app.set({material:{finish:'gloss'}})"),
+            ('finish_raw', "app.set({material:{finish:'raw'}})"),
             ('fill_epoxy_ocean', "app.set({material:{fill:'epoxy', fillPreset:'ocean'}})"),
             ('unsanded_overpour', "app.set({material:{sanded:false}})"),
             ('sanded_again', "app.set({material:{sanded:true}})"),
             ('fill_char', "app.set({material:{fill:'char'}})"),
             ('light_dir_slider', "(() => { const i = document.querySelector('.slider[data-k=az] input'); i.value = 140; i.dispatchEvent(new Event('input')); })()"),
-            ('fill_glow_bloom', "app.set({material:{fill:'epoxy', fillPreset:'glow_aqua'}, light:{light:'dark'}})"),
         ]
         for name, js in steps:
             R['change'][name] = await change(js); print(time.strftime('%H:%M:%S'), name, R['change'][name], flush=True)

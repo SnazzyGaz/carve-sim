@@ -14,13 +14,11 @@ export const SPECIES = {
 };
 
 export const FINISHES = {
-  raw:   { name: 'Raw sanded', darken: 1.0,  sat: 1.0,  rough: 0.10, coat: 0.0,  coatRough: 0.5 },
+  raw:   { name: 'Raw',        darken: 1.0,  sat: 1.0,  rough: 0.10, coat: 0.0,  coatRough: 0.5 },
   oil:   { name: 'Oiled',      darken: 0.86, sat: 1.12, rough: -0.06, coat: 0.18, coatRough: 0.38 },
-  satin: { name: 'Satin',      darken: 0.88, sat: 1.08, rough: -0.04, coat: 0.55, coatRough: 0.26 },
-  gloss: { name: 'Gloss',      darken: 0.86, sat: 1.1,  rough: -0.04, coat: 1.0,  coatRough: 0.03 },
 };
 
-// type: 0 opaque, 1 metallic (metal powder), 2 translucent (tinted, Beer-Lambert), 3 glow
+// type: 0 opaque, 1 metallic (metal powder), 2 translucent (tinted, Beer-Lambert)
 // metallic: color = swatch / binder tint, f0 = measured metal reflectance at normal incidence (sRGB hex)
 export const FILLS = {
   black:    { name: 'Black',      group: 'Opaque', type: 0, color: '#0c0c0d', rough: 0.12 },
@@ -39,20 +37,16 @@ export const FILLS = {
   amber:    { name: 'Amber',      group: 'Translucent', type: 2, color: '#d08a2a', absorb: [0.035, 0.12, 0.42], scatter: '#7a4a10', rough: 0.05 },
   ocean:    { name: 'Ocean',      group: 'Translucent', type: 2, color: '#1b8fa0', absorb: [1.3, 0.35, 0.28], scatter: '#053a46', rough: 0.05 },
   emerald:  { name: 'Emerald',    group: 'Translucent', type: 2, color: '#2f9d5a', absorb: [1.1, 0.25, 0.8], scatter: '#063d1c', rough: 0.05 },
-  clear:    { name: 'Water clear',group: 'Translucent', type: 2, color: '#ffffff', absorb: [0.03, 0.03, 0.035], scatter: '#000000', rough: 0.04 },
-  glow_aqua:{ name: 'Aqua glow',  group: 'Glow', type: 3, color: '#cfe9e4', glow: '#29ffd9', rough: 0.1 },
-  glow_lime:{ name: 'Lime glow',  group: 'Glow', type: 3, color: '#dcecc4', glow: '#7dff3a', rough: 0.1 },
-  glow_blue:{ name: 'Blue glow',  group: 'Glow', type: 3, color: '#d6e2f0', glow: '#3aa0ff', rough: 0.1 },
+  clear:    { name: 'Clear',      group: 'Translucent', type: 2, color: '#ffffff', absorb: [0.03, 0.03, 0.035], scatter: '#000000', rough: 0.04 },
 };
 
-// light presets after Relief Forge 2.0.7 (key strength, warmth -1..1, cool fill opposite the key, exposure) plus the studio
-// environment level (Ambient)
+// Light presets, after Relief Forge 2.0.7. Each is a complete set-up (key height and strength, warmth, cool fill, studio
+// ambient, exposure, occlusion); the panel only exposes direction and brightness on top. Picked for reading a carve:
+// Studio for the overall look, Raking to judge depth and wall quality, Overhead for true colour and pattern with
+// little shadow, Daylight for a cooler, window-lit check of how the wood will read in a room.
 export const LIGHTS = {
-  studio:   { name: 'Studio',        az: 220, el: 42, key: 2.0, env: 0.5,  warm: 0.2,  fill: 0.25, exp: 1.0 },
-  raking:   { name: 'Raking light',  az: 250, el: 14, key: 3.4, env: 0.42, warm: 0.3,  fill: 0.35, exp: 1.2 },
-  gallery:  { name: 'Gallery',       az: 200, el: 58, key: 2.6, env: 0.2,  warm: 0.3,  fill: 0.3,  exp: 1.0 },
-  overhead: { name: 'Overhead flat', az: 180, el: 85, key: 2.0, env: 0.55, warm: 0.0,  fill: 0.5,  exp: 1.0 },
-  dramatic: { name: 'Dramatic',      az: 245, el: 20, key: 3.8, env: 0.12, warm: 0.45, fill: 0.0,  exp: 0.95 },
-  window:   { name: 'Cool daylight', az: 300, el: 40, key: 2.2, env: 0.45, warm: -0.4, fill: 0.4,  exp: 1.0 },
-  dark:     { name: 'Lights down',   az: 220, el: 40, key: 0.7, env: 0.15, warm: -0.5, fill: 0.1, exp: 1.0 },
+  studio:   { name: 'Studio',   az: 220, el: 42, key: 2.0, env: 0.5,  warm: 0.2,  fill: 0.25, exp: 1.0, ao: 0.25 },
+  raking:   { name: 'Raking',   az: 250, el: 14, key: 3.4, env: 0.42, warm: 0.3,  fill: 0.35, exp: 1.2, ao: 0.3 },
+  overhead: { name: 'Overhead', az: 180, el: 85, key: 2.0, env: 0.55, warm: 0.0,  fill: 0.5,  exp: 1.0, ao: 0.2 },
+  daylight: { name: 'Daylight', az: 300, el: 40, key: 2.2, env: 0.45, warm: -0.4, fill: 0.4,  exp: 1.0, ao: 0.25 },
 };
