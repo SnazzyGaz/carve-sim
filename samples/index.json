@@ -1,6 +1,5 @@
 [
  { "path": "samples/old-fisherman.svg", "label": "Old fisherman · V-carve", "default": true },
  { "path": "samples/bald-eagle.svg", "label": "Bald eagle · V-carve" },
- { "path": "samples/wolf-pocket-levels.svg", "label": "Wolf · 3-level pocket + border" },
- { "path": "samples/stag-engrave.svg", "label": "Stag · engrave lines" }
+ { "path": "samples/regal-stag.svg", "label": "Regal stag · V-carve" }
 ]
