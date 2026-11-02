@@ -255,6 +255,39 @@ export class Viewer {
     const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bakeMat); q.frustumCulled = false; this.bakeScene.add(q);
     this.bakeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.bakeKeys = ['', '']; this.bakeJobs = [null, null];
+    // finished full-res bakes are kept per key (species / insert / carve), newest last, so switching back is instant;
+    // the count is capped by a GPU memory budget (~280 MB of 8-bit RGBA + mips)
+    this.mkBakeRT = mk; this.woodCache = new Map(); this.bakeFree = []; this.bakeHits = 0;
+  }
+  woodBudget(w, h) { return Math.max(2, Math.floor(280e6 / (w * h * 4 * 1.34))); }
+  releaseBakeRT(rt) {   // an RT no slot shows any more: keep it if it holds a finished bake, else recycle it
+    if (!rt || this.bakeRT.includes(rt) || [...this.woodCache.values()].includes(rt)) return;
+    if (this.bakeFree.length < 1) this.bakeFree.push(rt); else rt.dispose();
+  }
+  takeBakeRT(w, h) {
+    const inUse = (rt) => this.bakeRT.includes(rt);
+    let rt = this.bakeFree.pop();
+    if (!rt) {
+      const budget = this.woodBudget(w, h);
+      const live = this.woodCache.size + this.bakeRT.filter((r) => r && r.width > 16 && !this.isCached(r)).length;
+      if (live + 1 > budget) {
+        for (const [k, v] of this.woodCache) if (!inUse(v)) { this.woodCache.delete(k); rt = v; break; }
+      }
+    }
+    return rt || this.mkBakeRT();
+  }
+  isCached(rt) { for (const v of this.woodCache.values()) if (v === rt) return true; return false; }
+  trimWoodCache() {
+    const any = this.woodCache.values().next().value; if (!any) return;
+    const budget = this.woodBudget(any.width, any.height);
+    for (const [k, v] of this.woodCache) {
+      if (this.woodCache.size + this.bakeRT.filter((r) => r && r.width > 16 && !this.isCached(r)).length <= budget) break;
+      if (!this.bakeRT.includes(v)) { this.woodCache.delete(k); v.dispose(); }
+    }
+  }
+  flushWoodCache() {   // new carve or board size: every cached bake is stale
+    const old = [...this.woodCache.values()]; this.woodCache.clear();
+    for (const rt of old) this.releaseBakeRT(rt);
   }
   // Wood bake, progressive: a new carve or species first bakes a 1024 px preview (1/16 of the work, one short frame),
   // shown at once; the full 4096 px bake then runs in 16 horizontal strips, one per idle animation frame, and swaps in
@@ -263,17 +296,28 @@ export class Viewer {
     const S = this.state, U = this.uniforms;
     const rect = U.uBakeRect.value, mode = U.uMode.value;
     const base = [this.depthVer || 0, rect.x, rect.y, rect.z, rect.w].join(',');
+    if (base !== this.cacheBase) { this.cacheBase = base; this.flushWoodCache(); }
     const jobs = [[0, mode === 3 ? 1 : 0, false]];
     if (mode === 2 || mode === 3) jobs.push([1, mode === 2 ? 1 : 0, true]);
     for (const [slot, k, flat] of jobs) {
       const key = base + '|' + (k ? S.insert : S.species) + '|' + k + '|' + flat;
       if (this.bakeKeys[slot] === key) continue;
       this.bakeKeys[slot] = key;
+      const prev = this.bakeRT[slot]; this.bakeJobs[slot] = null;
+      const hit = this.woodCache.get(key);
+      if (hit) {   // baked before (e.g. switching back to a species): reuse it, no work at all
+        this.woodCache.delete(key); this.woodCache.set(key, hit);
+        this.bakeRT[slot] = hit; this.releaseBakeRT(prev);
+        (slot ? U.uBakeB : U.uBakeA).value = hit.texture; this.bakeHits++;
+        continue;
+      }
       const lo = this.bakeLoRT[slot], sl = this.bakeLoLong / Math.max(rect.z, rect.w);
       this.bakeInto(lo, k, flat, Math.max(16, Math.round(rect.z * sl)), Math.max(16, Math.round(rect.w * sl)));
       (slot ? U.uBakeB : U.uBakeA).value = lo.texture;
-      const rt = this.bakeRT[slot], s = this.bakeLong / Math.max(rect.z, rect.w);
+      const s = this.bakeLong / Math.max(rect.z, rect.w);
       const w = Math.max(16, Math.round(rect.z * s)), h = Math.max(16, Math.round(rect.w * s));
+      this.bakeRT[slot] = null; this.releaseBakeRT(prev);
+      const rt = this.takeBakeRT(w, h); this.bakeRT[slot] = rt;
       if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
       this.bakeJobs[slot] = { k, flat, row: 0, step: Math.ceil(h / 16) };
     }
@@ -298,7 +342,10 @@ export class Viewer {
         this.bakeInto(rt, j.k, j.flat, rt.width, rt.height, j.row, all ? rt.height : j.step);
         j.row = all ? rt.height : j.row + j.step;
       } while (all && j.row < rt.height);
-      if (j.row >= rt.height) { (slot ? this.uniforms.uBakeB : this.uniforms.uBakeA).value = rt.texture; this.bakeJobs[slot] = null; done = true; }
+      if (j.row >= rt.height) {
+        (slot ? this.uniforms.uBakeB : this.uniforms.uBakeA).value = rt.texture; this.bakeJobs[slot] = null; done = true;
+        this.woodCache.set(this.bakeKeys[slot], rt); this.trimWoodCache();
+      }
       if (!all) break;
     }
     return done;
@@ -447,6 +494,12 @@ export class Viewer {
     return g;
   }
   setMeshRes(res) { this.state.meshRes = res; this.buildMeshes(); }
+  setBoard({ margin, thickness } = {}) {   // board around the art (mm) and its thickness; no re-bake of the carve
+    if (margin != null) this.state.margin = Math.max(0, +margin);
+    if (thickness != null) this.state.thickness = Math.max(3, +thickness);
+    this.buildMeshes(); this.placeLight(); this.dirty = true; this.shadowDirty = true;
+    if (this.requestRender) this.requestRender(true);
+  }
   // Level of detail: the grid only has to be fine enough to carry the carve's silhouette, since every pixel's normal and
   // colour come from the depth map anyway. Quads smaller than ~1.5 screen pixels cost vertex work and, worse, make the
   // GPU shade each pixel several times (2x2-quad overshading of sub-pixel triangles with a heavy fragment shader), so
@@ -710,7 +763,10 @@ export class Viewer {
     this.setQuality('full');
     if (this.group.visible) { this.bakeIfNeeded(); this.bakeStep(true); }
     if (this.envPending) this.buildEnv(true);
-    const r = this.renderer, pr = r.getPixelRatio();
+    const r = this.renderer, pr = r.getPixelRatio(), gl = r.getContext();
+    const maxDim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), ...gl.getParameter(gl.MAX_VIEWPORT_DIMS), 16384);
+    const cw = r.domElement.clientWidth || 1, ch = r.domElement.clientHeight || 1;
+    scale = Math.max(1, Math.min(scale, maxDim / (Math.max(cw, ch) * pr)));
     r.setPixelRatio(pr * scale); this.exportScale = scale; this.resize();
     this.render();
     this.exportScale = 1;

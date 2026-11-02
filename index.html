@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Carve Sim</title>
+<title>Carve Sim · SVG showroom</title>
 <link rel="stylesheet" href="css/app.css">
 <!-- three.js trimmed to the modules used (tools/build-vendor.mjs); every import resolves to one local file -->
 <script type="importmap">{
@@ -19,59 +19,62 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark"></span><span class="word">CARVE<b>SIM</b></span></div>
-  <div class="file" id="fileName">No artwork loaded</div>
+  <div class="brand"><span class="mark"></span><span class="word">CARVE<b>SIM</b></span><span class="sub">SVG showroom</span></div>
+  <div class="file" id="fileName">No SVG loaded</div>
   <div class="status" id="status"><i></i><span>Idle</span></div>
   <div class="actions">
-    <button class="btn ghost" id="btnSvg" disabled>Export SVG</button>
-    <button class="btn ghost" id="btnStats" disabled>Stats JSON</button>
+    <select id="pngScale" title="Render size, relative to the view"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4× (hi-res)</option></select>
     <button class="btn primary" id="btnPng" disabled>Render PNG</button>
   </div>
 </header>
 <main class="layout">
   <aside class="panel left">
     <section>
-      <h3>Artwork</h3>
+      <h3>SVG</h3>
       <label class="drop" id="drop">
-        <input type="file" id="fileIn" accept=".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml" hidden>
+        <input type="file" id="fileIn" accept=".svg,image/svg+xml" hidden>
         <img id="thumb" alt="">
-        <div class="dropText"><b>Drop black &amp; white art</b><span>PNG, JPG or SVG — or click to browse</span></div>
+        <div class="dropText"><b>Drop a finished SVG</b><span>From the CNC skill or any vector art. Click to browse, or paste (Ctrl+V).</span></div>
       </label>
       <div class="samples" id="samples"></div>
     </section>
     <section>
-      <h3>Trace</h3>
-      <div class="row"><label>Threshold</label><select id="thrMode"><option value="value">Value</option><option value="auto">Auto (Otsu)</option><option value="adaptive">Adaptive</option></select></div>
-      <div class="slider" data-k="threshold" data-min="1" data-max="254" data-step="1" data-v="128" data-u=""></div>
-      <div class="slider" data-k="smooth" data-min="0" data-max="5" data-step="0.1" data-v="0.8" data-u="" data-label="Smoothing"></div>
-      <div class="slider" data-k="min_feature" data-min="0.1" data-max="3" data-step="0.05" data-v="0.5" data-u="mm" data-label="Min feature"></div>
-      <div class="slider" data-k="width_mm" data-min="50" data-max="1200" data-step="5" data-v="300" data-u="mm" data-label="Finished width"></div>
-      <div class="row"><label>Invert (cut the light)</label><input type="checkbox" class="tog" id="invert"></div>
-      <div class="row svgonly hidden"><label>Re-trace SVG with bit rules</label><input type="checkbox" class="tog" id="svg_retrace"></div>
-      <div class="row"><label>Auto-trace</label><input type="checkbox" class="tog" id="autoTrace" checked></div>
-      <button class="btn block" id="btnTrace" disabled>Trace now</button>
+      <h3>Carve settings</h3>
+      <div class="row"><label>Carve type</label><select id="carve"><option value="auto">From the file</option><option value="vcarve">V-carve</option><option value="pocket">Pocket (flat)</option></select></div>
+      <div class="slider" data-k="vbit_angle" data-min="20" data-max="150" data-step="1" data-v="60" data-u="°" data-label="V-bit angle" data-scope="bake"></div>
+      <div class="chips mini" id="vbitChips"><button data-v="30">30°</button><button data-v="60" class="on">60°</button><button data-v="90">90°</button><button data-v="120">120°</button></div>
+      <div class="slider" data-k="depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="V-carve max depth" data-scope="bake"></div>
+      <div class="slider" data-k="pocket_depth" data-min="0.5" data-max="20" data-step="0.1" data-v="6" data-u="mm" data-label="Pocket depth" data-scope="bake"></div>
+      <div class="slider" data-k="engrave_depth" data-min="0.2" data-max="5" data-step="0.1" data-v="1" data-u="mm" data-label="Engrave depth" data-scope="bake"></div>
+      <div class="slider" data-k="width_mm" data-min="30" data-max="1200" data-step="1" data-v="300" data-u="mm" data-label="Finished width" data-scope="bake"></div>
+      <div class="slider" data-k="margin" data-min="0" data-max="80" data-step="1" data-v="18" data-u="mm" data-label="Board margin" data-scope="board"></div>
+      <div class="slider" data-k="thickness" data-min="6" data-max="60" data-step="1" data-v="22" data-u="mm" data-label="Board thickness" data-scope="board"></div>
+      <div class="hint">Each change bakes once, when you let go of the slider.</div>
     </section>
     <section>
-      <h3>Bit &amp; machine</h3>
-      <div class="seg" id="mode"><button data-v="vcarve" class="on">V-carve</button><button data-v="pocket">Pocket</button></div>
-      <div class="slider" data-k="vbit_angle" data-min="20" data-max="150" data-step="1" data-v="60" data-u="°" data-label="V-bit angle"></div>
-      <div class="chips mini" id="vbitChips"><button data-v="30">30°</button><button data-v="60" class="on">60°</button><button data-v="90">90°</button><button data-v="120">120°</button></div>
-      <div class="slider" data-k="depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="Max depth"></div>
-      <div class="slider" data-k="tool_dia" data-min="0.5" data-max="12.7" data-step="0.025" data-v="3.175" data-u="mm" data-label="End mill Ø"></div>
-      <div class="slider" data-k="fragile_mm" data-min="0.3" data-max="3" data-step="0.1" data-v="1.0" data-u="mm" data-label="Flag strips under"></div>
-      <div class="grid3">
-        <label>Feed<input type="number" id="feed" value="1200" step="50"></label>
-        <label>Plunge<input type="number" id="plunge" value="300" step="25"></label>
-        <label>Rapid<input type="number" id="rapid" value="3000" step="100"></label>
-      </div>
-      <div class="hint">mm/min · stepover 40% · safe Z 5 mm</div>
+      <details id="traceBox">
+        <summary>Trace an image instead</summary>
+        <div class="hint">A one-off: turns a black &amp; white PNG or JPG into a CNC SVG and opens it here. The tracer (OpenCV + potrace, about 12 MB) loads only when this panel is opened, from this site, so it works offline.</div>
+        <label class="drop small" id="tDrop">
+          <input type="file" id="tFileIn" accept=".png,.jpg,.jpeg,image/png,image/jpeg" hidden>
+          <img id="tThumb" alt="">
+          <div class="dropText"><b>Pick an image</b><span>PNG or JPG · <a href="#" id="tSample">use the sample photo</a></span></div>
+        </label>
+        <div class="row"><label>Image type</label><select id="tPreset"><option value="line">Clean line art</option><option value="bold">Bold stencil</option><option value="photo">Photo / shaded</option><option value="fine">Fine detail</option></select></div>
+        <div class="row"><label>Cut as</label><div class="seg small inline" id="tMode"><button data-v="vcarve" class="on">V-carve</button><button data-v="pocket">Pocket</button></div></div>
+        <div class="row"><label>Invert (cut the light)</label><input type="checkbox" class="tog" id="tInvert"></div>
+        <button class="btn block primary" id="btnTrace" disabled>Trace</button>
+        <div class="bar hidden" id="tBar"><i></i></div>
+        <div class="hint" id="tStatus"></div>
+        <button class="btn block ghost" id="btnSvg" disabled>Download SVG</button>
+      </details>
     </section>
   </aside>
 
   <section class="stage">
     <div class="tabs">
       <button data-tab="3d" class="on">3D board</button>
-      <button data-tab="2d">2D trace</button>
+      <button data-tab="2d">2D depth</button>
       <div class="spacer"></div>
       <div class="views" id="views">
         <button data-view="top" title="Top down">Top</button>
@@ -80,26 +83,23 @@
         <label class="sway" title="Turntable: the board sways slowly about the vertical axis (camera and lights stay put)"><input type="checkbox" id="sway"> Sway</label>
         <button data-view="corner" title="Corner detail">Corner</button>
         <button data-view="close" title="Close-up on the orbit centre (double-click the board to set it)">Close-up</button>
+        <span class="ab" id="ab" title="Two looks to flip between: changes go to the active letter"><button data-v="A" class="on">A</button><button data-v="B">B</button></span>
       </div>
     </div>
-    <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a black &amp; white graphic</b><span>It's traced to a CNC-ready SVG with your bit rules, then carved here in 3D.</span></div></div></div>
+    <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a finished SVG</b><span>It's carved here in 3D in the wood, finish and fill of your choice.</span></div></div></div>
     <div class="viewport hidden" id="vp2d">
       <div class="twod">
-        <div class="layers">
-          <div class="seg small" id="layer2d"><button data-v="trace" class="on">Traced SVG</button><button data-v="source">Source</button><button data-v="mask">Tool-safe mask</button></div>
-          <label class="ck"><input type="checkbox" id="showFlags" checked> Show flags</label>
-          <div class="legend"><span class="lg red"></span>Dropped detail <span class="lg purple"></span>Bridged <span class="lg orange"></span>Fragile strip <span class="lg blue"></span>Needs clearance</div>
-        </div>
-        <div class="imgwrap" id="imgwrap"><img id="img2d" alt=""><img id="ovl2d" alt=""></div>
+        <div class="layers"><span class="muted">Baked depth map: white = uncut board, darker = deeper.</span></div>
+        <div class="imgwrap" id="imgwrap"><img id="img2d" alt=""></div>
       </div>
     </div>
-    <div class="busy hidden" id="busy"><div class="spin"></div><span id="busyText">Tracing…</span><div class="bar hidden" id="cvBar"><i></i></div></div>
+    <div class="busy hidden" id="busy"><div class="spin"></div><span id="busyText">Baking…</span><div class="bar hidden" id="cvBar"><i></i></div></div>
   </section>
 
   <aside class="panel right">
     <section>
-      <h3>Stats</h3>
-      <div class="stats" id="stats"><div class="muted">Load artwork to see the job.</div></div>
+      <h3>Job</h3>
+      <div class="stats" id="stats"><div class="muted">Load an SVG to see the job.</div></div>
       <div class="warns" id="warns"></div>
     </section>
     <section>
@@ -136,7 +136,6 @@
       <div class="row"><label>Cast shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
       <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
       <div class="row"><label>Mesh detail</label><select id="meshRes"><option value="512">Draft</option><option value="1024" selected>Fine</option><option value="2048">Max</option></select></div>
-      <div class="row"><label>Render scale</label><select id="pngScale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></div>
     </section>
   </aside>
 </main>
