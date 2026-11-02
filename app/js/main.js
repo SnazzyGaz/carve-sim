@@ -342,9 +342,12 @@ function showStats(job, doc) {
 // samples: the first load shows the bundled sample so the board is never empty (?nosample skips it, for tests)
 fetch('samples/index.json').then((r) => r.json()).then((list) => {
   $('#samples').innerHTML = list.map((s) => `<button data-p="${s.path}" title="${s.path}">${s.label}</button>`).join('');
-  $$('#samples button').forEach((b) => b.onclick = () => app.loadPath(b.dataset.p));
+  // a sample may carry a "look" (board, fill, sanded...) it was designed for, e.g. an inverted design meant for a pale
+  // fill in a dark board; it is applied once on load and can be changed freely afterwards
+  const loadSample = (s) => app.loadPath(s.path).then(() => { if (s.look) app.set({ material: s.look }); });
+  $$('#samples button').forEach((b, i) => b.onclick = () => loadSample(list[i]));
   const d = list.find((s) => s.default) || list[0];
-  if (d && !qs.has('nosample') && !app.doc) app.loadPath(d.path);
+  if (d && !qs.has('nosample') && !app.doc) loadSample(d);
 }).catch(() => {});
 // load a file shipped with the app (relative URL): SVGs import, images go through the tracer
 app.loadPath = async (path) => {

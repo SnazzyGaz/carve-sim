@@ -6,7 +6,7 @@ Carve Sim is now a showroom for finished SVGs, such as the ones the CNC vector s
 
 ## Flow
 
-1. **Import.** Use the drop zone, the file picker, or paste (Ctrl+V with SVG text or an .svg file). Bundled samples are in the list below the drop zone. The first visit opens the old fisherman sample (add `?nosample` to skip it).
+1. **Import.** Use the drop zone, the file picker, or paste (Ctrl+V with SVG text or an .svg file). Bundled samples are in the list below the drop zone. An entry in `samples/index.json` can carry an optional `look` (any of `species`, `fill`, `fillPreset`, `insert`, `sanded`, ...) that is applied once when that sample loads; the samurai skull uses it to open on walnut with a white epoxy fill, sanded flush, because it is an inverted design (the light areas are cut and filled). The first visit opens the old fisherman sample (add `?nosample` to skip it).
 2. **Parse** (main thread, `js/svg-import.js`). This reads the physical size, the layers and the metadata, and turns every shape into path data plus its transform.
 3. **Bake** (worker, `js/svg-worker.js` + `js/sdf-lib.js`). Each layer becomes an **exact signed distance field computed from the path geometry**, not from a rasterised mask:
    - The path data is parsed (M L H V C S Q T A Z, relative and implicit commands), transformed to texture space and flattened adaptively (curves within 0.05 texel, arcs per SVG F.6.5).
@@ -54,7 +54,7 @@ Every dependency is self-hosted in `app/vendor` (three-lite, opencv.js and openc
 - Code is network-first, so updates show up straight away when you are online. vendor/ and samples/ are cache-first.
 - Add `?nosw` to bypass the service worker.
 
-To test it, load the page, open the tracer once, set the context offline and reload. The page, all three samples (old fisherman, bald eagle, regal stag) and a full trace still work (tested with Playwright and `context.set_offline(true)`).
+To test it, load the page, open the tracer once, set the context offline and reload. The page, all four samples (old fisherman, bald eagle, regal stag, samurai skull) and a full trace still work (tested with Playwright and `context.set_offline(true)`).
 
 ## Exports
 

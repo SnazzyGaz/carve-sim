@@ -1,5 +1,7 @@
 [
  { "path": "samples/old-fisherman.svg", "label": "Old fisherman · V-carve", "default": true },
  { "path": "samples/bald-eagle.svg", "label": "Bald eagle · V-carve" },
- { "path": "samples/regal-stag.svg", "label": "Regal stag · V-carve" }
+ { "path": "samples/regal-stag.svg", "label": "Regal stag · V-carve" },
+ { "path": "samples/samurai-skull-inverted.svg", "label": "Samurai skull · pale fill on dark",
+   "look": { "species": "walnut", "fill": "epoxy", "fillPreset": "white", "sanded": true } }
 ]
