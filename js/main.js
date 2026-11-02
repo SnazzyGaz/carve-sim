@@ -55,13 +55,26 @@ function segSet(sel, v) { $$(sel + ' button').forEach((x) => x.classList.toggle(
 
 // ---------------------------------------------------------------- material UI
 const woodSwatch = (s) => `linear-gradient(90deg, ${s.early} 0 18%, ${s.late} 22% 26%, ${s.early} 30% 52%, ${s.late} 56% 61%, ${s.early} 66% 84%, ${s.late} 88% 92%, ${s.early} 96%)`;
+// Compact picker: a tone switch (Pale · Mid · Dark & red) shows one group of swatches at a time, so the card stays short
 function woodChips(sel, key) {
-  let grp = '';   // grouped by tone, so the right board is quick to find
-  $(sel).innerHTML = Object.entries(SPECIES).map(([k, s]) => (s.group !== grp ? `<div class="grp">${(grp = s.group)}</div>` : '') +
-    `<button data-v="${k}"><span class="sw" style="background:${woodSwatch(s)}"></span>${s.name}</button>`).join('');
-  $$(sel + ' button').forEach((b) => b.onclick = () => { $$(sel + ' button').forEach((x) => x.classList.toggle('on', x === b)); viewer.setMaterial({ [key]: b.dataset.v }); });
-  segSet(sel, viewer.state[key]);
+  const groups = [...new Set(Object.values(SPECIES).map((s) => s.group))];
+  const sw = document.createElement('div'); sw.className = 'seg small wgrp'; sw.id = sel.slice(1) + 'Grp';
+  sw.innerHTML = groups.map((g) => `<button data-g="${g}">${g}</button>`).join('');
+  $(sel).before(sw);
+  $(sel).innerHTML = Object.entries(SPECIES).map(([k, s]) => `<button data-v="${k}" data-g="${s.group}" title="${s.name}"><span class="sw" style="background:${woodSwatch(s)}"></span>${s.name.replace(/^Black walnut$/, 'Walnut')}</button>`).join('');
+  $$(sel + ' button').forEach((b) => b.onclick = () => { $$(sel + ' button').forEach((x) => x.classList.toggle('on', x === b)); viewer.setMaterial({ [key]: b.dataset.v }); inlayCheck(); });
+  sw.querySelectorAll('button').forEach((b) => b.onclick = () => showGroup(sel, b.dataset.g));
+  woodSet(sel, viewer.state[key]);
 }
+function showGroup(sel, g) {
+  $$(`#${sel.slice(1)}Grp button`).forEach((b) => b.classList.toggle('on', b.dataset.g === g));
+  $$(sel + ' button').forEach((b) => b.classList.toggle('hidden', b.dataset.g !== g));
+}
+function woodSet(sel, v) { segSet(sel, v); const s = SPECIES[v]; if (s) showGroup(sel, s.group); }
+// an inlay of the board's own wood hides the carve: warn, and when Inlay is first picked, start from a contrasting wood
+const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+function contrastWood(k) { const L = lum(SPECIES[k].early); return Object.keys(SPECIES).filter((x) => x !== 'mdf').sort((a, b) => Math.abs(lum(SPECIES[b].early) - L) - Math.abs(lum(SPECIES[a].early) - L))[0]; }
+function inlayCheck() { const S = viewer.state; $('#inlaySame').classList.toggle('hidden', !(S.fill === 'inlay' && S.insert === S.species)); }
 woodChips('#species', 'species'); woodChips('#inserts', 'insert');
 $('#finish').innerHTML = Object.entries(FINISHES).map(([k, f]) => `<button data-v="${k}">${f.name}</button>`).join('');
 seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', viewer.state.finish);
@@ -91,11 +104,15 @@ function fillUI(v) {
   $('#fillEpoxy').classList.toggle('hidden', v !== 'epoxy');
   $('#fillInlay').classList.toggle('hidden', v !== 'inlay');
   $('#sandRow').classList.toggle('hidden', v === 'none');
-  pourUI();
+  pourUI(); inlayCheck();
 }
 // as-poured controls only mean something before the face is sanded, so they appear when Sanded flush is off
 function pourUI() { $('#pourCtl').classList.toggle('hidden', !(viewer.state.fill === 'epoxy' && !viewer.state.sanded)); }
-seg('#fill', (v) => { viewer.setMaterial({ fill: v }); fillUI(v); });
+seg('#fill', (v) => {
+  const o = { fill: v };
+  if (v === 'inlay' && viewer.state.insert === viewer.state.species) o.insert = contrastWood(viewer.state.species);
+  viewer.setMaterial(o); woodSet('#inserts', viewer.state.insert); fillUI(v);
+});
 $('#sanded').onchange = (e) => { viewer.setMaterial({ sanded: e.target.checked }); pourUI(); };
 $('#flood').onchange = (e) => { const o = { flood: e.target.checked }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); };
 // light: a preset sets the whole rig (height, strength, warmth, fill, ambient); the panel adds direction and brightness
@@ -107,6 +124,19 @@ $('#sway').onclick = () => { const on = !viewer.state.sway; viewer.setSway(on); 
 seg('#backdrop', (v) => viewer.setLighting({ backdrop: v }));
 seg('#meshRes', (v) => viewer.setMeshRes(+v));
 $$('#views button[data-view]').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
+// the current preset is lit until the user orbits away
+viewer.onView = (name) => $$('#views button[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+// F / Home: fit the whole board again
+addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]'))) return;
+  if ((e.key === 'f' || e.key === 'F' || e.key === 'Home') && viewer.depth && !$('#vp3d').classList.contains('hidden')) { e.preventDefault(); viewer.setView('fit'); }
+});
+// one-time gesture hint: shown until the first orbit / zoom / pan, then never again
+const GKEY = 'carveSim.gestureHintSeen';
+const seenHint = () => { try { return localStorage.getItem(GKEY) === '1'; } catch { return false; } };
+function hideHint() { $('#gesture').classList.add('hidden'); try { localStorage.setItem(GKEY, '1'); } catch {} }
+viewer.onGesture = () => { if (!$('#gesture').classList.contains('hidden')) hideHint(); else if (!seenHint() && app.job) hideHint(); };
+$('#gestureX').onclick = hideHint;
 // cards fold like Relief Forge's: click the heading
 $$('.card > h3').forEach((h) => h.onclick = () => h.parentElement.classList.toggle('folded'));
 
@@ -132,7 +162,8 @@ function applyLook(L) {
 seg('#ab', (v) => {
   if (v === lookOn) return;
   looks[lookOn] = grabLook(); lookOn = v;
-  if (looks[v]) applyLook(looks[v]); else looks[v] = grabLook();
+  if (looks[v]) applyLook(looks[v]);
+  else { looks[v] = grabLook(); toast(`${v} starts as a copy of ${v === 'B' ? 'A' : 'B'}. Change the wood, fill or light, then flip back to compare.`, 5000); }
 });
 
 // ---------------------------------------------------------------- SVG import
@@ -142,6 +173,7 @@ drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
 document.body.addEventListener('dragover', (e) => e.preventDefault());
 document.body.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+$('#openTrace').onclick = (e) => { e.preventDefault(); e.stopPropagation(); openTrace().then(() => $('#traceBox').scrollIntoView({ behavior: 'smooth', block: 'start' })); };
 $('#fileIn').onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; };
 document.addEventListener('paste', (e) => {
   if (e.target.closest && e.target.closest('input,textarea,select')) return;
@@ -162,9 +194,10 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   setStatus('busy', 'Reading SVG…');
   let doc;
   try { doc = await parseSvg(text, name); }
-  catch (e) { console.error(e); setStatus('err', e.message || 'Could not read that SVG'); return; }
+  catch (e) { console.warn(e); showError('Could not open that file', (e.message || 'It is not a readable SVG.') + ' The board you had is still loaded.'); return; }
   doc.t0 = t0; doc.parse_ms = Math.round(performance.now() - t0); doc.from = from;
-  if (!doc.layers.some((l) => l.kind !== 'profile' && l.items.length) && !doc.generic) { setStatus('err', 'No carvable shapes in that SVG'); return; }
+  if (!doc.layers.some((l) => l.kind !== 'profile' && l.items.length) && !doc.generic) { showError('No carvable shapes in that SVG', NO_SHAPES); return; }
+  doc.prev = { doc: app.doc, job: app.job, file: $('#fileName').textContent, settings: { ...settings }, src: { ...carveSrc } };
   app.doc = doc; app.job = null;
   // everything about the carve comes from the file, else a fixed default (never a value left over from the last file)
   const M = doc.meta, take = (k, v) => { settings[k] = v != null ? v : CARVE_DEFAULTS[k]; carveSrc[k] = v != null ? 'file' : 'default'; };
@@ -181,10 +214,35 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   $('#empty3d').classList.add('hidden');
   if (doc.generic) {
     busy(true, 'Drawing the SVG…');
-    try { doc.raster = await rasterFor(doc, TEX_MAX, SS); } catch (e) { console.error(e); setStatus('err', 'The browser could not draw that SVG'); busy(false); return; }
+    try { doc.raster = await rasterFor(doc, TEX_MAX, SS); } catch (e) { console.warn(e); busy(false); restorePrev(doc); showError('The browser could not draw that SVG', 'It may be damaged or use features the browser cannot render. The board you had is still loaded.'); return; }
     doc.raster_ms = Math.round(performance.now() - t0) - doc.parse_ms;
   }
   return requestBake();
+}
+const NO_SHAPES = 'Nothing in it would be cut: paths need a fill or a stroke. The board you had is still loaded.';
+// a failed or empty import puts the last good board back (file name, carve settings, Job) instead of a blank one
+function restorePrev(doc) {
+  const P = doc.prev; if (!P || app.doc !== doc) return;
+  app.doc = P.doc; app.job = P.job; Object.assign(settings, P.settings); Object.assign(carveSrc, P.src);
+  slider('margin').set(settings.margin); viewer.state.margin = settings.margin;
+  $('#fileName').textContent = P.file;
+  if (!P.doc) $('#empty3d').classList.remove('hidden');
+  $('#thumb').src = app.previewUrl || ''; $('#img2d').src = app.previewUrl || ''; drop.classList.toggle('has', !!app.previewUrl);
+}
+function showError(title, text) {
+  setStatus('err', title);
+  $('#smTitle').textContent = title; $('#smText').textContent = text; $('#smHelpText').classList.add('hidden');
+  $('#stageMsg').classList.remove('hidden');
+}
+function hideError() { $('#stageMsg').classList.add('hidden'); }
+$('#smClose').onclick = hideError;
+$('#smHelp').onclick = (e) => { e.preventDefault(); $('#smHelpText').classList.toggle('hidden'); };
+$('#smSample').onclick = (e) => { e.preventDefault(); hideError(); const b = $('#samples button'); if (b) app.loadPath(b.dataset.p); };
+let toastT = 0, toastUrl = null;
+function toast(html, ms = 3500, url = null) {
+  const t = $('#toast'); t.innerHTML = html; t.classList.remove('hidden'); clearTimeout(toastT);
+  if (toastUrl) URL.revokeObjectURL(toastUrl); toastUrl = url;
+  toastT = setTimeout(() => { t.classList.add('hidden'); if (toastUrl) { URL.revokeObjectURL(toastUrl); toastUrl = null; } }, ms);
 }
 function effKinds() {   // generic art is cut as the file's mode (V-carve unless it says pocket)
   const d = app.doc; if (!d) return [];
@@ -220,6 +278,9 @@ async function bake() {
       worker.postMessage({ ...msg, rid: id });
     });
     if (my !== app.seq || doc !== app.doc) return;
+    if (!(r.stats.cut_pct > 0) || !(r.stats.max_depth_mm > 0)) {   // baked, but nothing is cut: say so, keep the old board
+      restorePrev(doc); showError('No carvable shapes in that SVG', NO_SHAPES); return;
+    }
     const tw0 = performance.now();
     const prevW = viewer.depth && viewer.depth.artW;
     viewer.setDepth(new Uint16Array(r.depthTex), r.tw, r.th, r.W, r.H, r.md, new Uint8Array(r.ao),
@@ -232,22 +293,25 @@ async function bake() {
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
     job.first_frame_ms = Math.round(performance.now() - (doc.firstDone ? tb : doc.t0)); job.from_import = !doc.firstDone; doc.firstDone = true;
     showStats(job, doc);
-    $('#btnPng').disabled = false;
+    $('#btnPng').disabled = false; hideError();
+    if (!seenHint() && $('#gesture').classList.contains('hidden')) $('#gesture').classList.remove('hidden');
     setStatus('ok', `Baked · ${job.first_frame_ms} ms`);
-  } catch (e) { console.error(e); if (my === app.seq) setStatus('err', 'Bake failed: ' + String(e.message).slice(0, 80)); }
+  } catch (e) { console.error(e); if (my === app.seq) { restorePrev(doc); showError('That SVG could not be baked', String(e.message).slice(0, 120)); } }
   finally {
     baking = false;
     if (again) bake();
     else { busy(false); idle.splice(0).forEach((f) => f(app.job)); }
   }
 }
+// the worker sends the preview after a good bake; a failed or empty import has already put the old doc back, so it is skipped
 function showPreview(blob, doc) {
   if (doc !== app.doc) return;
   if (app.previewUrl) URL.revokeObjectURL(app.previewUrl);
   app.previewUrl = URL.createObjectURL(blob);
   $('#img2d').src = app.previewUrl; $('#thumb').src = app.previewUrl; drop.classList.add('has');
 }
-function setStatus(cls, text) { const s = $('#status'); s.className = 'status ' + cls; s.querySelector('span').textContent = text; }
+// the header pill's busy state is 'is-busy' (plain 'busy' is the stage overlay's class)
+function setStatus(cls, text) { const s = $('#status'); s.className = 'status ' + (cls === 'busy' ? 'is-busy' : cls); s.querySelector('span').textContent = text; }
 function busy(on, text) { $('#busy').classList.toggle('hidden', !on); if (text) $('#busyText').textContent = text; }
 function progress(p) { const bar = $('#cvBar'); bar.classList.toggle('hidden', p == null); if (p != null) bar.firstElementChild.style.width = Math.round(p * 100) + '%'; }
 
@@ -285,7 +349,7 @@ fetch('samples/index.json').then((r) => r.json()).then((list) => {
 // load a file shipped with the app (relative URL): SVGs import, images go through the tracer
 app.loadPath = async (path) => {
   const r = await fetch(path);
-  if (!r.ok) { setStatus('err', 'Could not fetch ' + path); return; }
+  if (!r.ok) { showError('Could not load ' + path.split('/').pop(), 'The file was not found (HTTP ' + r.status + ').'); return; }
   const name = path.split('/').pop();
   if (/\.svg$/i.test(path)) { await loadSvgText(await r.text(), name); return app.ready(); }
   const tp = await openTrace(); tp.setImage(await r.blob(), name); await tp.trace(); return app.ready();
@@ -308,20 +372,27 @@ const base = () => (app.doc?.name || 'art').replace(/\.[^.]+$/, '');
 function dl(url, name) { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
 app.dl = dl;
 $('#btnPng').onclick = async () => {
-  const b = $('#btnPng'); b.disabled = true; setStatus('busy', 'Rendering PNG…');
+  const b = $('#btnPng'), sc = +$('#pngScale').value; b.disabled = true;
+  const msg = `Rendering ${sc}× PNG…`; setStatus('busy', msg); busy(true, msg); progress(null);
+  // let the busy state paint before the render takes the main thread
+  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
   try {
-    const blob = await viewer.exportPNG(+$('#pngScale').value);
+    const blob = await viewer.exportPNG(sc);
     const S = viewer.state; const url = URL.createObjectURL(blob);
-    dl(url, `${base()}_${S.species}_${S.fill}${S.fill === 'epoxy' ? '-' + S.fillPreset : ''}.png`);
-    setTimeout(() => URL.revokeObjectURL(url), 4000); setStatus('ok', 'PNG saved');
-  } finally { b.disabled = false; }
+    const name = `${base()}_${S.species}_${S.fill}${S.fill === 'epoxy' ? '-' + S.fillPreset : ''}.png`;
+    dl(url, name);
+    const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    toast(`<img src="${url}" alt=""><span>Saved <b>${esc(name)}</b></span>`, 5000, url);
+    setStatus('ok', 'PNG saved');
+  } catch (e) { console.error(e); showError('Render failed', String(e.message || e).slice(0, 120)); }
+  finally { b.disabled = false; if (!baking) busy(false); }
 };
 
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
-  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
+  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); woodSet('#species', viewer.state.species); woodSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
   if (o.light) { viewer.setLighting(o.light); syncLightSliders(); }
-  if (o.view) viewer.setView(o.view);
+  if (o.view) viewer.setView(o.view, true);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };
 // test hook only (perf probes): re-bake the current file with other carve values; there is no UI for this on purpose

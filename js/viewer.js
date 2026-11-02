@@ -103,12 +103,14 @@ export class Viewer {
     this.dirty = true;
     // interaction: draft frames while moving, one full frame after it settles
     this.interacting = false; this.lastMove = 0; this.frameGaps = [];
-    this.controls.addEventListener('start', () => { this.interacting = true; this.interact(); });
+    // a user gesture cancels a preset move and clears the active preset; onGesture lets the page hide its hint
+    this.controls.addEventListener('start', () => { this.interacting = true; this.anim = null; this.interact(); if (this.onView) this.onView(null); if (this.onGesture) this.onGesture(); });
     this.controls.addEventListener('end', () => { this.interacting = false; this.lastMove = performance.now(); });
-    this.controls.addEventListener('change', () => { this.dirty = true; this.lastMove = performance.now(); });
+    this.controls.addEventListener('change', () => { this.clampTarget(); this.dirty = true; this.lastMove = performance.now(); });
     let prev = 0; const t0 = performance.now();
     const loop = (now) => {
-      let moved = this.controls.update();
+      const animating = this.stepAnim(now);
+      let moved = this.controls.update() || animating;
       if (this.state.sway && this.group.visible) {
         // Forge's Sway: the board turns slowly to and fro about the vertical axis; camera, lights and floor stay put
         this.spin.rotation.y = Math.sin((now - t0) / 2600) * 0.38; this.shadowDirty = true; moved = true;
@@ -394,7 +396,8 @@ export class Viewer {
     U.uArt.value.set(artW, artH); U.uTexel.value.set(1 / tw, 1 / th); U.uMaxDepth.value = maxDepth;
     this.buildMeshes();
     this.group.visible = true;
-    if (first) this.setView('angle');
+    this.updateLimits();
+    if (first) this.setView('angle', true);
     this.placeLight();
   }
   blankSteps() { const t = new THREE.DataTexture(new Uint16Array([0xC800, 0xC800]), 1, 1, THREE.RGFormat, THREE.HalfFloatType); t.needsUpdate = true; return t; }
@@ -482,7 +485,7 @@ export class Viewer {
   setBoard({ margin, thickness } = {}) {   // board around the art (mm) and its thickness; no re-bake of the carve
     if (margin != null) this.state.margin = Math.max(0, +margin);
     if (thickness != null) this.state.thickness = Math.max(3, +thickness);
-    this.buildMeshes(); this.placeLight(); this.dirty = true; this.shadowDirty = true;
+    this.buildMeshes(); this.placeLight(); this.dirty = true; this.shadowDirty = true; this.updateLimits();
     if (this.requestRender) this.requestRender(true);
   }
   // Level of detail: the grid only has to be fine enough to carry the carve's silhouette, since every pixel's normal and
@@ -636,24 +639,68 @@ export class Viewer {
   }
 
   // ------------------------------------------------------------ camera
-  setView(name) {
+  // distance at which the whole board (art + margin) fills the view
+  fitDist() {
+    const D = this.depth || { artW: 300, artH: 300 }, R = Math.max(D.artW, D.artH) + 2 * this.state.margin;
+    return R / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) * 1.12;
+  }
+  // zoom-out stops at ~2.5x the fit distance for this board, so it can't shrink to a sliver
+  updateLimits() { this.controls.maxDistance = Math.max(this.fitDist() * 2.5, 60); this.controls.minDistance = 25; }
+  // keep the orbit centre over the board (plus a little margin), so a right-drag pan can't lose it; the camera moves
+  // with the centre so the view angle is unchanged
+  clampTarget() {
+    const D = this.depth || { artW: 300, artH: 300 }, S = this.state, t = this.controls.target;
+    const hx = D.artW / 2 + S.margin + 10, hz = D.artH / 2 + S.margin + 10, R = Math.max(D.artW, D.artH);
+    const cx = Math.min(hx, Math.max(-hx, t.x)), cz = Math.min(hz, Math.max(-hz, t.z)), cy = Math.min(S.thickness + R * 0.3, Math.max(0, t.y));
+    if (cx === t.x && cy === t.y && cz === t.z) return;
+    const dx = cx - t.x, dy = cy - t.y, dz = cz - t.z;
+    t.set(cx, cy, cz); this.camera.position.x += dx; this.camera.position.y += dy; this.camera.position.z += dz;
+  }
+  // Presets ease the camera (position + centre) over ~350 ms; instant for scripts, the first frame and reduced motion.
+  setView(name, instant = false) {
     this.dirty = true;
     if (!this.state.sway && this.spin.rotation.y) { this.spin.rotation.y = 0; this.shadowDirty = true; }   // as Forge's fit()
-    const D = this.depth || { artW: 300, artH: 300 }, S = this.state;
-    const R = Math.max(D.artW, D.artH) + 2 * S.margin, t = this.controls.target, cam = this.camera;
-    const fit = R / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2))) * 1.12;
-    if (name !== 'close') t.set(0, S.thickness, 0);
+    const D = this.depth || { artW: 300, artH: 300 }, S = this.state, cam = this.camera;
+    const fit = this.fitDist();
+    const t = name === 'close' ? this.controls.target.clone() : new THREE.Vector3(0, S.thickness, 0);
+    if (name === 'fit') name = 'angle';
+    let pos;
     const put = (pol, az, dist) => {
       pol = THREE.MathUtils.degToRad(pol); az = THREE.MathUtils.degToRad(az);
-      cam.position.set(t.x + dist * Math.sin(pol) * Math.sin(az), t.y + dist * Math.cos(pol), t.z + dist * Math.sin(pol) * Math.cos(az));
+      pos = new THREE.Vector3(t.x + dist * Math.sin(pol) * Math.sin(az), t.y + dist * Math.cos(pol), t.z + dist * Math.sin(pol) * Math.cos(az));
     };
     if (name === 'top') put(0.01, 0, fit * 1.02);
     else if (name === 'angle') put(38, 18, fit * 1.18);
     else if (name === 'low') put(66, 30, fit * 1.25);
     else if (name === 'close') put(42, 22, fit * 0.28);
     else if (name === 'corner') { t.set(D.artW * 0.32, S.thickness, D.artH * 0.38); put(62, 40, fit * 0.6); }
-    cam.lookAt(t); this.controls.update();
+    else return;
+    this.updateLimits();
+    if (this.onView) this.onView(name);
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (instant || reduce || !this.depth) {
+      this.anim = null; this.controls.target.copy(t); cam.position.copy(pos); cam.lookAt(t); this.controls.update(); return;
+    }
+    // ease in orbit space (about each end's centre) so the move arcs round the board instead of cutting through it
+    const sph = (p, c) => { const v = p.clone().sub(c), radius = v.length() || 1; return { radius, theta: Math.atan2(v.x, v.z), phi: Math.acos(Math.min(1, Math.max(-1, v.y / radius))) }; };
+    const s0 = sph(cam.position, this.controls.target), s1 = sph(pos, t);
+    let dth = s1.theta - s0.theta; dth = Math.atan2(Math.sin(dth), Math.cos(dth));
+    this.anim = { t0: performance.now(), dur: 360, c0: this.controls.target.clone(), c1: t, s0, s1, dth };
+    this.interact();
   }
+  // one eased step of a preset move; returns true while moving
+  stepAnim(now) {
+    const A = this.anim; if (!A) return false;
+    const k = Math.min(1, (now - A.t0) / A.dur), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;   // ease-in-out cubic
+    const c = A.c0.clone().lerp(A.c1, e);
+    const r = A.s0.radius + (A.s1.radius - A.s0.radius) * e, ph = A.s0.phi + (A.s1.phi - A.s0.phi) * e, th = A.s0.theta + A.dth * e;
+    this.controls.target.copy(c);
+    this.camera.position.set(c.x + r * Math.sin(ph) * Math.sin(th), c.y + r * Math.cos(ph), c.z + r * Math.sin(ph) * Math.cos(th));
+    this.camera.lookAt(c);
+    if (k >= 1) { this.anim = null; this.lastMove = now; }
+    return true;
+  }
+  finishAnim() { if (this.anim) { this.anim.t0 = -1e9; this.stepAnim(performance.now()); this.controls.update(); } }
   setSway(on) {
     this.state.sway = !!on;
     if (!on) { this.spin.rotation.y = 0; this.shadowDirty = true; this.lastMove = performance.now(); }
@@ -661,16 +708,20 @@ export class Viewer {
   }
   setCloseUp(u, v) { // art mm
     const D = this.depth, S = this.state; if (!D) return;
-    this.spin.updateMatrixWorld(true); this.controls.target.copy(this.group.localToWorld(new THREE.Vector3(u, 0, v))); this.setView('close');
+    this.spin.updateMatrixWorld(true); this.controls.target.copy(this.group.localToWorld(new THREE.Vector3(u, 0, v))); this.setView('close', true);
   }
   focusAt(e) {
     const r = this.renderer.domElement.getBoundingClientRect();
     const p = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(p, this.camera);
     const hit = new THREE.Vector3();
-    if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.state.thickness), hit)) {
+    const D = this.depth || { artW: 300, artH: 300 }, S = this.state;
+    const onBoard = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -S.thickness), hit) &&
+      Math.abs(hit.x) <= D.artW / 2 + S.margin && Math.abs(hit.z) <= D.artH / 2 + S.margin;
+    if (!onBoard) { if (this.depth) this.setView('fit'); return; }   // double-click on the backdrop: fit the board
+    {
       const off = hit.clone().sub(this.controls.target);
-      this.controls.target.add(off); this.camera.position.add(off);
+      this.anim = null; this.controls.target.add(off); this.camera.position.add(off); this.clampTarget(); this.dirty = true;
     }
   }
 
@@ -723,6 +774,7 @@ export class Viewer {
 
   async exportPNG(scale = 2) {
     if (this.warm) await this.warm;
+    this.finishAnim();
     this.setQuality('full');
     if (this.group.visible) { this.bakeIfNeeded(); this.bakeStep(true); }
     if (this.envPending) this.buildEnv(true);
