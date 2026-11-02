@@ -21,7 +21,7 @@ export function withCarveMeta(svg, { mode, depth, vbit_angle }) {
   return svg.replace(/(<svg\b[^>]*>)/, `$1\n<!-- CNC vector | mode=${mode}${extra} | units: mm -->`);
 }
 
-export function initTrace({ $, $$, seg, slider, setStatus, onSvg }) {
+export function initTrace({ $, $$, seg, slider, setStatus, onSvg, dl }) {
   const engine = new Engine();
   let img = null, mode = 'vcarve', last = null;
   const bar = $('#tBar'), note = (t) => ($('#tStatus').textContent = t);
@@ -80,6 +80,7 @@ export function initTrace({ $, $$, seg, slider, setStatus, onSvg }) {
   $('#btnTrace').onclick = trace;
   $('#btnSvg').onclick = () => {
     if (!last) return;
+    if (dl) { dl(last.svgUrl, last.name); return; }
     const a = document.createElement('a'); a.href = last.svgUrl; a.download = last.name; document.body.appendChild(a); a.click(); a.remove();
   };
   return { setImage, trace, engine, get last() { return last; } };

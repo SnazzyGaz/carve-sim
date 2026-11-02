@@ -361,7 +361,7 @@ app.loadSvgText = (t, n) => loadSvgText(t, n).then(() => app.ready());
 let tracePanel = null;
 function openTrace() {
   const box = $('#traceBox'); if (!box.open) box.open = true;
-  return tracePanel ??= import('./trace-panel.js').then((m) => m.initTrace({ $, $$, seg, slider, setStatus,
+  return tracePanel ??= import('./trace-panel.js').then((m) => m.initTrace({ $, $$, seg, slider, setStatus, dl,
     onSvg: (svg, name) => loadSvgText(svg, name, 'trace') }));
 }
 $('#traceBox').addEventListener('toggle', () => { if ($('#traceBox').open) openTrace(); });
@@ -369,7 +369,18 @@ app.openTrace = openTrace;
 
 // ---------------------------------------------------------------- export
 const base = () => (app.doc?.name || 'art').replace(/\.[^.]+$/, '');
-function dl(url, name) { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+// Desktop app: webviews don't all honour <a download>, so the file goes to the Rust side, which shows a native Save dialog.
+async function nativeSave(url, name) {
+  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  return window.__TAURI_INTERNALS__.invoke('save_file', bytes, { headers: { 'x-file-name': encodeURIComponent(name) } });
+}
+function dl(url, name) {
+  if (window.__TAURI_INTERNALS__) {
+    return nativeSave(url, name).then((saved) => { if (saved) setStatus('ok', 'Saved ' + name); return saved ?? null; },
+      (e) => { console.error(e); showError('Save failed', String(e?.message || e).slice(0, 120)); return false; });
+  }
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
 app.dl = dl;
 $('#btnPng').onclick = async () => {
   const b = $('#btnPng'), sc = +$('#pngScale').value; b.disabled = true;
@@ -380,7 +391,9 @@ $('#btnPng').onclick = async () => {
     const blob = await viewer.exportPNG(sc);
     const S = viewer.state; const url = URL.createObjectURL(blob);
     const name = `${base()}_${S.species}_${S.fill}${S.fill === 'epoxy' ? '-' + S.fillPreset : ''}.png`;
-    dl(url, name);
+    const saved = await dl(url, name);                 // desktop: path, null if the Save dialog was cancelled, false on error
+    if (saved === false) return;
+    if (saved === null) { setStatus('ok', 'Save cancelled'); return; }
     const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     toast(`<img src="${url}" alt=""><span>Saved <b>${esc(name)}</b></span>`, 5000, url);
     setStatus('ok', 'PNG saved');
@@ -400,6 +413,9 @@ app.setBake = (o) => { Object.assign(settings, o); for (const k in o) if (k in c
 fillUI('none');
 
 // offline: a small service worker caches the app shell (and the tracer once it has been used); ?nosw skips it
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !qs.has('nosw')) {
+// The desktop app (Tauri) ships every file locally, so it skips the offline cache (Windows serves it from http://tauri.localhost).
+const inTauri = !!window.__TAURI_INTERNALS__ || /(^|\.)tauri\.localhost$/.test(location.hostname) || location.protocol === 'tauri:';
+if (inTauri) document.documentElement.classList.add('desktop');
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !qs.has('nosw') && !inTauri) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('service worker', e)));
 }

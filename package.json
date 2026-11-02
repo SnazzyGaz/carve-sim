@@ -6,9 +6,13 @@
   "license": "GPL-2.0-or-later",
   "scripts": {
     "vendor": "node tools/build-vendor.mjs",
-    "serve": "cd app && python3 -m http.server 8766"
+    "serve": "cd app && python3 -m http.server 8766",
+    "tauri": "tauri",
+    "desktop:build": "tauri build",
+    "desktop:dev": "tauri dev"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@techstark/opencv-js": "5.0.0-release.1",
     "esbuild": "0.28.2",
     "potrace": "2.1.8",

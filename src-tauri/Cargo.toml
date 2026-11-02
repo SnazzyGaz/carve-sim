@@ -1,0 +1,29 @@
+[package]
+name = "carve-sim"
+version = "0.1.0"
+description = "Carve Sim: B/W art to CNC-ready SVG with a 3D wood, inlay and epoxy preview"
+authors = ["Gaz"]
+license = "GPL-2.0-or-later"
+repository = "https://github.com/SnazzyGaz/carve-sim"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "carve_sim_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Carve Sim",
+  "version": "0.1.0",
+  "identifier": "com.snazzygaz.carvesim",
+  "build": {
+    "frontendDist": "../app"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Carve Sim",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "GraphicsAndDesign",
+    "shortDescription": "B/W art to CNC-ready SVG with a 3D wood, inlay and epoxy preview",
+    "longDescription": "Carve Sim turns black-and-white art into a CNC-ready SVG and previews the carve in 3D in wood, with inlays and epoxy fills. Everything runs locally.",
+    "copyright": "Gaz, GPL-2.0-or-later",
+    "license": "GPL-2.0-or-later",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

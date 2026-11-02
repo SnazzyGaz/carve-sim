@@ -27,6 +27,23 @@ cd app && python3 -m http.server 8766    # http://127.0.0.1:8766/
 
 It won't work from a double-clicked `file://`. GitHub Pages publishes `app/` as is, with no build step.
 
+## Desktop apps
+
+Carve Sim also comes as an installable app for Windows, macOS and Linux. It's the same app, running offline in its own window.
+
+**Download:** [Releases](https://github.com/SnazzyGaz/carve-sim/releases). Pick the file for your system:
+
+- **Windows:** `Carve.Sim_x.y.z_x64-setup.exe` (or the `.msi`).
+- **macOS:** `Carve.Sim_x.y.z_universal.dmg` (Apple Silicon and Intel).
+- **Linux:** `Carve.Sim_x.y.z_amd64.AppImage` (run `chmod +x` on it, then open it) or the `.deb`.
+
+The apps are **not code-signed**, so the first launch needs one extra click:
+
+- **Windows:** SmartScreen says "Windows protected your PC". Click **More info**, then **Run anyway**.
+- **macOS:** right-click the app and choose **Open**, then **Open** again. Or try to open it once, then go to **System Settings > Privacy & Security** and click **Open Anyway**.
+
+The desktop shell is [Tauri v2](https://v2.tauri.app/) in `src-tauri/`. It loads `app/` unchanged. GitHub Actions (`.github/workflows/desktop.yml`) builds all three and attaches them to a draft release whenever a `v*` tag is pushed. To build one locally: install Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then run `npm ci && npx tauri build`.
+
 ## Licence
 
 GPL-2.0-or-later, because the tracer uses potrace. three.js is MIT and OpenCV.js is Apache-2.0. More detail is in `docs/`.

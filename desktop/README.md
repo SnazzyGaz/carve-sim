@@ -1,14 +1,9 @@
-# desktop/ (placeholder)
+# desktop/
 
-The Windows installer will live here later, built from this repo the same way as Relief Forge:
-a thin Electron or Tauri shell that loads `../app/index.html` unchanged.
+The desktop apps are built with Tauri v2. The project lives in `../src-tauri/` and loads `../app/` unchanged.
+CI is in `../.github/workflows/desktop.yml`. See the "Desktop apps" section of the main README.
 
-Nothing here yet. Notes for when it's built:
-
-- Load the static app straight from disk or a bundled local server. Everything in `app/` uses
-  relative paths, so `file://` works except for the Web Worker in some engines. Serving `app/`
-  from a tiny localhost server (or Tauri's asset protocol) is the safest route.
-- No backend, network access or Python needed: the engine is `app/js/carve-worker.js` with
-  OpenCV.js + potrace bundled in `app/vendor/`.
-- Electron: `mainWindow.loadFile(path.join(__dirname, '../app/index.html'))`, or `protocol.handle` to serve `app/`.
-- Tauri: set `build.frontendDist` to `../app` in `tauri.conf.json`.
+- `icon.svg` / `icon.png`: the app icon source. To regenerate the platform icons, run `npx tauri icon desktop/icon.png -o src-tauri/icons`.
+- Desktop-only behaviour in the web app: the service worker is skipped, and downloads (Render PNG, Download SVG)
+  go through the `save_file` command for a native Save dialog, because `<a download>` isn't honoured by every webview.
+- `dragDropEnabled` is false so the page's own HTML5 file drop keeps working.
