@@ -79,3 +79,80 @@ The trace output is unchanged: the same OpenCV binary and the same worker code p
 ## Visual check
 
 All screenshots in `screens/` and `docs/` were re-shot with the new renderer. Side by side with the old ones (white-oak ocean close-up, overpour, inlay, char, glow), they match. The close-up keeps its fibre detail, because the finest fibre noise is still live.
+
+## Materials v2 (branch `materials-v2`): lag pass
+
+Gaz reported the 3D view still felt laggy. `tools/lag.py` probes each lag source on its own. Both builds ran **at the same time** on the same box, so they shared the same CPU load:
+
+- before: worktree at 3986014 on :8770
+- after: the materials-v2 working tree on :8771
+
+The setup was headless Chromium on SwiftShader. perf.py used a 1600×1000 window and lag.py a 1200×760 one. The box was also running an unrelated process at 2–5 cores, so the absolute milliseconds are noisy (±30 % between runs). The triangle counts, shadow redraw counts and bake counts are exact.
+
+Causes found and fixed:
+
+1. **Full frames were triangle-bound.** The 1024 grid gave 2.6 M triangles per settled frame, about 0.1 px² each when the whole board is on screen. On a real GPU that means 2×2-quad overshading of a heavy fragment shader. → LOD grid: quads ≥ 1.5 screen px, coarsened by up to 4×, re-picked once the view settles. That's 0.66 M full / 0.16 M draft.
+2. **Every light slider redrew the 4096² shadow map** (7 redraws per 6-step drag). → Only azimuth and elevation do now.
+3. **A species, inlay or threshold change baked the 4096 wood in one frame** (25–49 s single frame on SwiftShader). → A 1024 preview bake, then 16 strips on idle frames.
+4. **PMREM env rebuilds** happen only on az/el changes, and are deferred out of drags.
+
+| Probe | Before (3986014) | After (materials-v2) | |
+|---|---:|---:|---|
+| Triangles, settled full frame (incl. shadow pass) | 2,631,230 | 656,670 | |
+| Triangles, drag frame | 658,964 | 164,750 | |
+| Settled full-quality frame | 18.2 s | 6.2 s | 2.9× faster |
+| Orbit drag frame (p50) | 4.0 s | 1.8 s | 2.3× faster |
+| Orbit drag frame (mean) | 4.5 s | 1.8 s | 2.5× faster |
+| Full frame after releasing orbit | 8.1 s | 3.3 s | 2.5× faster |
+| Slider drag "exposure": frame while dragging (mean) | 6.8 s | 1.8 s | 3.7× faster · shadow redraws 7 → 0 |
+| Slider drag "exposure": longest blocking task | 10.0 s | 6.8 s | 1.5× faster |
+| Slider drag "env": frame while dragging (mean) | 1.0 s | 2.2 s | 2.2× slower · shadow redraws 7 → 0 |
+| Slider drag "env": longest blocking task | 4.7 s | 8.5 s | 1.8× slower |
+| Slider drag "key": frame while dragging (mean) | 1.4 s | 1.5 s | 1.1× slower · shadow redraws 7 → 0 |
+| Slider drag "key": longest blocking task | 9.2 s | 5.4 s | 1.7× faster |
+| Slider drag "az": frame while dragging (mean) | 2.7 s | 1.4 s | 2.0× faster · shadow redraws 7 → 7 |
+| Slider drag "az": longest blocking task | 18.5 s | 2.3 s | 8.1× faster |
+| Orbit drag (lag probe): frame mean | 8.2 s | 409 ms | 20.1× faster |
+| Switch species_walnut: to first frame | 45.7 s | 1.6 s | 28.9× faster · bake: 1 in-frame; after: preview + 16 idle strips (max 734 ms) |
+| Switch species_walnut: longest blocking task | 45.7 s | 1.7 s | 27.6× faster |
+| Switch species_oak: to first frame | 49.1 s | 1.9 s | 25.7× faster · bake: 1 in-frame; after: preview + 16 idle strips (max 763 ms) |
+| Switch species_oak: longest blocking task | 49.1 s | 5.4 s | 9.1× faster |
+| Switch finish_gloss: to first frame | 33.8 s | 2.3 s | 14.8× faster |
+| Switch finish_gloss: longest blocking task | 33.8 s | 2.3 s | 14.8× faster |
+| Switch fill_epoxy_clear: to first frame | 269 ms | 313 ms | 1.2× slower |
+| Switch fill_epoxy_clear: longest blocking task | 269 ms | 309 ms | 1.1× slower |
+| Switch fill_metal_gold: to first frame | 189 ms | 237 ms | 1.3× slower |
+| Switch fill_metal_gold: longest blocking task | 172 ms | 235 ms | 1.4× slower |
+| Switch fill_inlay: to first frame | 4.3 s | 458 ms | 9.3× faster · bake: 1 in-frame; after: preview + 16 idle strips (max 800 ms) |
+| Switch fill_inlay: longest blocking task | 4.3 s | 800 ms | 5.3× faster |
+| Switch fill_glow_first: to first frame | 1.2 s | 1.3 s | 1.1× slower |
+| Switch fill_glow_first: longest blocking task | 1.2 s | 1.3 s | 1.1× slower |
+| Switch glow_settled_frame: to first frame | 358 ms | 366 ms | same |
+| Switch glow_settled_frame: longest blocking task | 357 ms | 343 ms | same |
+| Switch glow_off: to first frame | 25.0 s | 1.9 s | 13.5× faster |
+| Switch glow_off: longest blocking task | 25.0 s | 1.9 s | 13.5× faster |
+| Switch nobloom_settled_frame: to first frame | 41.3 s | 2.5 s | 16.3× faster |
+| Switch nobloom_settled_frame: longest blocking task | 41.3 s | 2.5 s | 16.3× faster |
+| perf.py change species_walnut | 19.8 s | 4.1 s | 4.9× faster |
+| perf.py change finish_gloss | 22.9 s | 7.3 s | 3.1× faster |
+| perf.py change fill_epoxy_ocean | 422 ms | 426 ms | same |
+| perf.py change unsanded_overpour | 14.5 s | 12.8 s | 1.1× faster |
+| perf.py change sanded_again | 222 ms | 704 ms | 3.2× slower |
+| perf.py change fill_char | 2.8 s | 5.2 s | 1.8× slower |
+| perf.py change light_dir_slider | 822 ms | 2.0 s | 2.4× slower |
+| perf.py change fill_glow_bloom | 1.4 s | 3.2 s | 2.3× slower |
+| Threshold slider → traced frame | 77.5 s | 24.0 s | 3.2× faster · longest task 38.8 s → 8.8 s |
+| Cold open → first 3D | 29.9 s | 19.4 s | 1.5× faster |
+| Cold open → traced 3D | 57.5 s | 33.3 s | 1.7× faster |
+| Load: longest main-thread task | 27.5 s | 11.5 s | 2.4× faster |
+| GPU textures / buffers | 287.4 / 88.8 MB | 301.4 / 22.2 MB | |
+| Console errors | 0 | 0 | |
+
+
+Notes:
+- An earlier lag JSON pair suggested the new build was "6× slower" (exposure 34 s vs 5.3 s). That came from mislabelled servers. Port 8766 served the *new* working tree, and 8767 served an older copy in /tmp/cs-before. The numbers above come from servers I started and checked myself.
+- A few small items are within noise or slightly slower:
+  - fill switches: +40–60 ms
+  - first glow switch: +0.1 s, a one-off for compiling the bloom programs
+  - the perf.py tail items (char, glow, light direction, sanded): in that run the before process ran its tail alone after the after process had finished, so it had less load
+- GPU texture memory went up by 14 MB (the AO texture and the 1024 preview bake). Vertex buffers went down from 89 MB to 22 MB.

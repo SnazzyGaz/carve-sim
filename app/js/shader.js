@@ -24,7 +24,8 @@ float fillH(vec2 p){
     float h = uOver * smoothstep(0.02, 0.55, b);
     return max(h, -d + 0.02) + ((h < 0.03 && d < 0.02) ? -0.5 : 0.0);
   }
-  return d > 0.02 ? uOver : -0.6;
+  // inlay plug standing proud before levelling, with a slight (~0.3 mm) eased edge instead of a vertical cliff
+  return d > 0.02 ? uOver * smoothstep(0.02, 0.5, d) : -0.6;
 }
 `;
 
@@ -49,8 +50,16 @@ uniform vec3 uOrigin;         // world position of the art's top-left corner on 
 uniform sampler2D uBakeA;     // baked wood of the board top & carve (rgb = albedo * 0.75, a = roughness), mipmapped
 uniform sampler2D uBakeB;     // baked insert wood for inlays (flat)
 uniform vec4 uBakeRect;       // board mm covered by the bakes: x0, z0, width, height
+uniform sampler2D uAO;        // r = baked occlusion of the carve (sky visibility lost), from the worker
+uniform float uAOs;           // AO strength (1 = the physical estimate)
+uniform float uPlugRot;       // grain angle of the inlay plug (radians): it is cut from its own board
+uniform vec3 uFillF0;         // metal fills: reflectance at normal incidence (linear)
+uniform float uFillVein;      // opaque fills: 3D marbled veins
+uniform vec3 uFillVeinCol;
+uniform float uKeyShare;      // share of the board-top irradiance that comes from the key light (rest: environment)
+uniform vec3 uGlueCol;
 
-float sSpec; vec3 sAlb; float sRough; float sMetal; float sCoat; float sCoatRough; vec3 sEmis; vec3 sN; float sAO; bool sOverrideN;
+float sSpec; vec3 sAlb; float sRough; float sMetal; float sCoat; float sCoatRough; vec3 sEmis; vec3 sN; vec3 sNc; float sAO; bool sOverrideN;
 
 // ---- noise (Ashima / Gustavson simplex, MIT)
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
@@ -81,71 +90,116 @@ vec2 hash2(vec2 p){ ivec2 i=ivec2(floor(p)); uvec2 u=uvec2(i+ivec2(32768)); uint
 float hash1(vec2 p){ return hash2(p).x; }
 // band-limit: fade a feature of frequency f (cycles/mm) to its mean once it gets near a pixel
 float aaFade(float coordFw, float freq){ return 1.0-smoothstep(0.18,0.55,coordFw*freq); }
+// cheap 3D value noise + fbm (marbled fills only)
+float vH3(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vN3(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(vH3(i), vH3(i + vec3(1, 0, 0)), f.x), mix(vH3(i + vec3(0, 1, 0)), vH3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(vH3(i + vec3(0, 0, 1)), vH3(i + vec3(1, 0, 1)), f.x), mix(vH3(i + vec3(0, 1, 1)), vH3(i + vec3(1, 1, 1)), f.x), f.y), f.z); }
+float vFbm(vec3 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * vN3(p); p = p * 2.03 + 17.1; a *= 0.5; } return s / 0.9375; }
+// 1D box filter of a line of width w centred on 0, seen through a pixel of width px at offset x: exact coverage at any zoom
+float lineCover(float x, float w, float px){ px = max(px, 1e-4); return clamp((min(x + 0.5*px, 0.5*w) - max(x - 0.5*px, -0.5*w)) / px, 0.0, 1.0); }
+// the inlay plug is cut from its own board: its grain runs at uPlugRot to the field's
+vec3 plugP(vec3 p){ float c = cos(uPlugRot), s = sin(uPlugRot); return vec3(c*p.x - s*p.z, p.y, s*p.x + c*p.z); }
 
 vec4 W(int k,int i){ return uWood[k*7+i]; }
 
 #if CARVE_PART == 1 || defined(CARVE_BAKE)
-// solid wood: tree axis along x, pith ~260 mm under the board, slightly tilted for cathedrals
+// Solid wood, evaluated in board space so every cut face (top, V walls, pocket floors, board edges) shows the grain it
+// really exposes. The board is flat-sawn from a log whose pith runs along x about 260 mm under it, slightly tilted, so
+// the top shows cathedrals, the long edges are near quarter-sawn (ray fleck) and the ends are end grain.
+// Pores are vessels: tubes along the fibre on a jittered (radial x arc) lattice, rows of big ones in the earlywood of
+// ring-porous species (oak, ash). Rays are radial ribbons, thin across the arc and tall along the fibre. Both are real
+// geometry cut by the surface, so a shallow cut through a tube reads as a dash and end grain reads as dots and lines.
 vec3 wood(vec3 p, int k, out float rough){
   vec4 c0=W(k,0), c1=W(k,1), c2=W(k,2), c3=W(k,3), c4=W(k,4), c5=W(k,5), c6=W(k,6);
   p += vec3(float(k)*173.0, 0.0, float(k)*61.0);
   float spacing=c0.w, contrast=c1.w, poreAmt=c2.w, ringPorous=c3.x, rays=c3.y, ribbon=c3.z, warp=c3.w;
-  float figure=c4.x, poreLen=c4.y, sharp=c4.z, limed=c4.w, streakAmt=c5.w, baseRough=c6.x;
-  float straight=c6.y;
+  float figure=c4.x, sharp=c4.z, limed=c4.w, streakAmt=c5.w, baseRough=c6.x;
+  float straight=c6.y, poreD=max(c6.z, 0.02), rayH=max(c6.w, 0.2);
   float fwz = length(vec2(dFdx(p.z),dFdy(p.z))) + length(vec2(dFdx(p.y),dFdy(p.y)))*0.5 + 1e-5;
-  float fwx = length(vec2(dFdx(p.x),dFdy(p.x))) + 1e-5;
   float w1 = snoise(vec3(p.x*0.0035, p.z*0.010, p.y*0.010));
   float w2 = snoise(vec3(p.x*0.004+5.2, p.z*0.035, p.y*0.035));
   float w3 = snoise(vec3(p.x*0.012+1.7, p.z*0.12, p.y*0.12));
   float vc = 150.0 + straight*520.0 + p.x*0.06*(1.0-straight) + w1*warp*22.0;
   float yc = -260.0 + p.x*0.10 + w1*warp*10.0;
-  float r = length(vec2(p.z - vc, p.y - yc)) + w2*warp*1.3 + w3*0.18*warp;
+  vec2 q = vec2(p.z - vc, p.y - yc);
+  float r = length(q) + w2*warp*1.3 + w3*0.18*warp;
+  float ang = atan(q.x, q.y);                        // around the pith, 0 = straight up through the board
   // uneven ring widths (good and bad growth years) + a slow wobble along the length
   float wob = snoise(vec3(p.x*0.018, r*0.22, 3.3));
   float ringPos = r/spacing + 0.9*snoise(vec3(r*0.045, 7.7, float(k))) + 0.12*wob;
-  float f = fract(ringPos);
-  float yr = hash1(vec2(floor(ringPos), float(k)*3.1));
+  float f = fract(ringPos), ri = floor(ringPos);
+  float yr = hash1(vec2(ri, float(k)*3.1));
   // earlywood flat, latewood a defined band (so tangential cuts read as crisp cathedral bands, not soft shading)
   float lw0 = clamp(1.0 - 1.6/(sharp+1.0), 0.35, 0.8) - 0.12*yr;
-  // edge widths in screen terms: crisp ~1.5 px boundaries even where the face cuts a ring tangentially
   float fr = length(vec2(dFdx(ringPos),dFdy(ringPos)));
   float ew = clamp(fr*1.5, 0.015, 0.2);
   float late = 0.28*f + 0.72*smoothstep(lw0 - ew, lw0 + ew, f);
   late *= (1.0 - smoothstep(1.0 - 2.0*ew, 1.0, f));
   late = mix(late, 0.8/(sharp+1.0), 1.0-aaFade(fr,1.0));
-  vec3 col = mix(c0.rgb, c1.rgb, clamp(late*contrast*mix(0.8,1.5,yr),0.0,1.0));
+  vec3 col = mix(c0.rgb, c1.rgb, clamp(late*contrast*mix(0.85,1.25,yr),0.0,1.0));
   // long tonal streaks (figure) and dark/light streak bands (walnut, wenge)
   float fig = snoise(vec3(p.x*0.005, p.z*0.06, p.y*0.06));
   col *= 1.0 + figure*fig*0.55;
   float st = snoise(vec3(p.x*0.012+9.1, p.z*0.55, p.y*0.55));
   st = mix(st, 0.0, 1.0-aaFade(fwz,0.55));
   col = mix(col, c5.rgb, clamp(smoothstep(0.15,0.85,st)*streakAmt,0.0,1.0));
-  // pores: fine dashes along the grain, concentrated in earlywood for ring-porous species
-  float pn = snoise(vec3(p.x*0.06/poreLen, p.z*1.7, p.y*1.7));
-  float pn2 = snoise(vec3(p.x*0.11/poreLen+4.0, p.z*3.4, p.y*3.4));
-  float pores = max(smoothstep(0.50, 0.88, pn), smoothstep(0.55, 0.9, pn2)*aaFade(fwz,3.4));
-  float poreFade = aaFade(fwz, 1.7) * aaFade(fwx, 0.06/poreLen);
-  float poreZone = mix(1.0, smoothstep(0.55,0.05,f)*1.4, ringPorous);
-  pores = mix(0.10, pores, poreFade) * poreZone;
-  vec3 poreCol = limed > 0.5 ? c2.rgb : c2.rgb;
-  col = mix(col, poreCol, clamp(pores*poreAmt,0.0,1.0));
-  // ray flecks (oak family)
+
+  // ---- vessels (pores)
+  float rr = f * spacing;                                          // mm into this growth ring (0 = start of earlywood)
+  float s = ang * r + w3 * 2.0 + w2 * 0.6;                         // arc mm, tubes wander gently along the length
+  float ewW = min(spacing * 0.42, poreD * 3.6);                    // earlywood pore zone of ring-porous wood
+  bool early = ringPorous > 0.5 && rr < ewW;
+  float cR = poreD * (early ? 1.25 : 2.3), cS = poreD * (early ? 1.55 : 2.5);
+  vec2 cell = vec2(floor(rr / cR), floor(s / cS));
+  vec2 h = hash2(cell + vec2(ri * 7.0 + float(k) * 31.0, 0.0));
+  float hp = hash1(cell.yx + vec2(ri * 3.7, 11.0));
+  float rad = 0.5 * poreD * (early ? mix(0.8, 1.15, h.x) : mix(0.5, 0.9, h.x));
+  if (ringPorous > 0.5 && !early) rad *= 0.38;                     // latewood vessels of oak/ash are small
+  float prob = ringPorous > 0.5 ? (early ? 0.85 : 0.3) : mix(0.55, 0.75, ringPorous);
+  vec2 ctr = (cell + 0.5 + (h - 0.5) * vec2(max(0.0, 1.0 - 2.0*rad/cR), max(0.0, 1.0 - 2.0*rad/cS))) * vec2(cR, cS);
+  float pxm = fwz + 1e-4;                                          // surface footprint, mm
+  float pd = length(vec2(rr, s) - ctr);
+  // vessels are chains of short elements: on a long-grain face they read as dashes, not endless scratches
+  float lenP = poreD * 16.0;
+  float xi = floor((p.x + h.y * lenP) / lenP);
+  float on = hash1(cell + vec2(xi * 13.0, ri)) < 0.8 ? 1.0 : 0.0;
+  float pSharp = (hp < prob ? on : 0.0) * (1.0 - smoothstep(rad - 0.5*pxm, rad + 0.5*pxm, pd));
+  float pMean = 0.8 * prob * 3.14159 * rad * rad / (cR * cS);            // what a pixel sees once the pores are sub-pixel
+  float pores = mix(pMean, pSharp, aaFade(pxm, 0.5 / max(rad, 0.01)));
+  col = mix(col, c2.rgb, clamp(pores * poreAmt * 1.6, 0.0, 1.0));
+
+  // ---- rays: radial ribbons (constant angle), staggered along the fibre, lens-shaped
+  float ray = 0.0;
   if (rays > 0.0){
-    float rn = snoise(vec3(p.x*0.22, p.z*2.6, p.y*2.6+3.0));
-    float fl = smoothstep(0.70, 0.92, rn) * aaFade(fwz, 2.6);
-    col = mix(col, c1.rgb*0.78, fl*rays*0.55);
+    float rayS = 0.5 + rayH * 0.12;                                // tangential spacing, mm (at the board)
+    float rayW = clamp(0.035 + rayH * 0.018, 0.03, 0.36);          // ray width, mm
+    float sa = ang * 260.0;
+    float ia = floor(sa / rayS);
+    vec2 ha = hash2(vec2(ia, float(k) * 5.0 + 3.0));
+    float len = rayH * mix(0.6, 1.4, ha.y), cx = len * 1.7;
+    float xs = p.x + ha.x * cx;
+    float ix = floor(xs / cx), u = fract(xs / cx) * cx / len;     // u in 0..1 along this ray, > 1 is the gap to the next
+    vec2 hb = hash2(vec2(ia, ix + floor(r / 40.0) * 57.0));
+    float on = (hb.x < 0.75 && u < 1.0) ? 1.0 : 0.0;
+    float half_ = 0.5 * rayW * mix(0.6, 1.3, hb.y) * sqrt(max(0.0, 1.0 - (2.0*u - 1.0)*(2.0*u - 1.0)));
+    float dA = abs(ang - (ia + 0.5 + (ha.x - 0.5) * 0.5) * rayS / 260.0) * r;   // arc distance to the ray, mm
+    float rSharp = on * (1.0 - smoothstep(half_ - 0.5*pxm, half_ + 0.5*pxm, dA));
+    float rMean = 0.75 * 0.5 * 0.785 * rayW / rayS;
+    ray = mix(rMean, rSharp, aaFade(pxm, 0.5 / rayW)) * rays;
+    col = mix(col, c1.rgb * vec3(0.86, 0.80, 0.74), clamp(ray, 0.0, 1.0) * 0.75);
   }
   // interlocked ribbon (padauk): alternating light/dark bands that also change sheen
   float rib = sin(p.z*0.42 + w1*5.0 + w2*2.0);
   col *= 1.0 + ribbon*0.075*rib;
-  // limed: white paste in the open grain + a whitewash over everything
+  // limed: white paste in the open grain (pore colour) + a whitewash over everything
   col = mix(col, vec3(0.86,0.84,0.80), limed*0.16);
-  // fine fibre noise so flats never look like plastic
 #ifndef CARVE_BAKE
   float fib = snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
   col *= 1.0 + fib*0.035;
 #endif
-  rough = baseRough + pores*0.12 + ribbon*0.06*rib;
+  // open pores scatter (rougher), ray tissue is dense and smooth (the silver-grain sheen)
+  rough = baseRough + pores*0.18*(1.0 - limed) - ray*0.18 + ribbon*0.06*rib;
   return max(col, vec3(0.0));
 }
 #endif
@@ -179,6 +233,8 @@ vec3 carveNormal(vec2 uv){
   // height = -depth
   return normalize(vec3(hx/dx, 1.0, hz/dz));
 }
+float hx_(vec2 uv){ float e = uTexel.x; return (depthAt(uv+vec2(e,0.0)) - depthAt(uv-vec2(e,0.0))) / (2.0*e*uArt.x); }
+float hz_(vec2 uv){ float e = uTexel.y; return (depthAt(uv+vec2(0.0,e)) - depthAt(uv-vec2(0.0,e))) / (2.0*e*uArt.y); }
 
 // voronoi char (alligatoring): returns crack line strength, cell random and cell-edge distance
 vec3 charCells(vec2 x){
@@ -208,45 +264,77 @@ vec3 charSurface(vec3 p, float thin, out float rough){
 }
 
 #ifndef CARVE_BAKE
-// fill: flush (top at y=0) or overpour (top at vBoard.y); returns albedo, sets material globals
+float aoAt(vec2 uv){
+  if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return 1.0;
+  return clamp(1.0 - texture2D(uAO, uv).r * uAOs, 0.1, 1.0);
+}
+float schlick(float c){ c = clamp(1.0 - c, 0.0, 1.0); float c2 = c*c; return 0.04 + 0.96*c2*c2*c; }
+// Fill: flush (top at y=0) or overpour (top at vBoard.y); returns the base-layer albedo, sets the material globals.
+// The resin's top is one dielectric interface: it is drawn as the clear coat (with its own flat normal), so the base layer
+// below it carries no extra specular (sSpec = 0) except where the base itself is a reflector (metal flakes).
 vec3 fillSurface(vec3 P, float thick, vec3 Vw){
   vec3 col = uFillColor;
-  sMetal = 0.0; sRough = uFillRough; sCoat = 1.0; sCoatRough = 0.04;
-  if (!uSanded) { sCoatRough = 0.02; sRough = 0.05; }
-  else { sCoat = max(uFinish.w, 0.55); sCoatRough = max(uFinishCoatRough*0.6, 0.06); sRough = max(uFillRough, 0.18); }
-  if (uFillType == 1){
-    // mica powder: metal flakes with a little sparkle, band-limited
-    vec2 fq = P.xz*14.0; float fw = length(fwidth(fq));
-    vec2 h = hash2(fq + 3.0); float fade = 1.0-smoothstep(0.4,1.2,fw);
-    sMetal = 1.0; sRough = uFillRough + (h.x-0.5)*0.22*fade;
-    col *= 0.8 + 0.4*mix(0.5, h.y, fade);
-    float sw = snoise(vec3(P.x*0.08, P.z*0.08, 1.0));
-    col *= 1.0 + 0.06*sw;     // swirls in the pour
-    sCoat = uSanded ? 0.25 : 1.0; sCoatRough = 0.12;
-  } else if (uFillType == 2 || uFillType == 3){
-    // look through the resin to the carved floor: refract, march once, Beer-Lambert
+  // the pour's surface: self-levelled gloss before sanding; after sanding it takes the finish (raw = frosted)
+  float coat = uSanded ? (uFinish.w > 0.05 ? max(uFinish.w, 0.6) : 1.0) : 1.0;
+  float coatR = uSanded ? (uFinish.w > 0.05 ? max(uFinishCoatRough*0.6, 0.05) : 0.38) : 0.02;
+  sMetal = 0.0; sRough = uFillRough; sCoat = coat; sCoatRough = coatR; sSpec = 0.0;
+  if (uFillType == 0){
+    // pigmented resin: diffuse body under the gloss interface
+    sRough = 0.45;
+    if (uFillVein > 0.5){   // marbled pour: domain-warped 3D veins, continuous through the carve
+      vec3 mq = vec3(P.x, P.y*3.0, P.z) * 0.024; float w = vFbm(mq * 1.6 + 5.0);
+      float v1 = abs(sin((mq.x * 1.2 + mq.z * 0.8 + mq.y * 0.6 + 4.2 * w) * 3.14159));
+      float v2 = abs(sin((mq.x * 0.5 - mq.z * 1.3 + 7.0 * vFbm(mq * 3.3 + 1.7)) * 6.28318));
+      float aa = clamp(1.0 - length(fwidth(mq)) * 6.0, 0.0, 1.0);
+      float vein = (1.0 - smoothstep(0.0, mix(0.4, 0.09, aa), v1)) * 0.7 + (1.0 - smoothstep(0.0, mix(0.3, 0.035, aa), v2)) * 0.3 * aa;
+      col = mix(col * mix(0.94, 1.03, vFbm(mq * 5.0)), uFillVeinCol, vein * 0.8);
+    }
+  } else if (uFillType == 1){
+    // metal powder in resin: platelets with their own tilt (glitter) under the resin's flat gloss coat. Once a flake is
+    // sub-pixel its tilt spread is folded into the roughness (no sparkle aliasing, same average highlight width).
+    vec2 fq = P.xz * 16.0; float fw = length(fwidth(fq));
+    vec2 hc = hash2(fq + 3.0), ht = hash2(fq + 71.0) - 0.5;
+    float fade = 1.0 - smoothstep(0.35, 1.1, fw);
+    vec3 fN = normalize(vec3(ht.x * 0.75, 1.0, ht.y * 0.75));
+    sN = normalize(mix(vec3(0.0,1.0,0.0), fN, fade));
+    float r0 = uFillRough * 0.6;
+    sRough = sqrt(r0*r0 + (1.0 - fade) * 0.09);
+    sMetal = 0.9; sSpec = 1.0;
+    float sw = snoise(vec3(P.x*0.08, P.z*0.08, 1.0));            // flow lines in the pour
+    col = uFillF0 * (1.0 + 0.07*sw) * mix(1.0, 0.75 + 0.5*hc.x, fade);
+  } else {
+    // clear / tinted / glow resin: look through it to the carved floor. Refract the view ray, march it to the floor,
+    // light the floor with the key (refracted in, absorbed on the way down, Fresnel-weighted) and the environment
+    // (occluded by the walls), then absorb on the way back up (Beer-Lambert) and add the dye's in-scatter.
     vec3 T = refract(Vw, vec3(0.0,1.0,0.0), 1.0/1.5);
     float ty = max(-T.y, 0.15);
-    float d0 = thick;
-    vec2 hit = P.xz + T.xz * (d0/ty);
+    vec2 hit = P.xz + T.xz * (thick/ty);
     float d1 = depthAt(hit/uArt);
     float topY = P.y;
     float L = max(topY + d1, 0.0) / ty;
     hit = P.xz + T.xz * L;
     float d2 = depthAt(hit/uArt);
-    L = max(topY + d2, 0.0) / ty;
-    vec3 floorW = applyFinish(bakeA(hit).rgb) * 0.82;          // the baked carve floor seen through the resin
+    float res = max(topY + d2, 0.0);                             // resin above the floor point
+    L = res / ty;
+    vec3 fa = bakeA(hit).rgb;
+    float la = dot(fa, vec3(0.2126,0.7152,0.0722));
+    vec3 floorA = max(mix(vec3(la), fa, 1.12) * 0.84, 0.0);      // wood under resin is wetted: darker, richer
+    vec3 Lk = normalize(uKeyDir);
+    vec3 Lr = refract(-Lk, vec3(0.0,1.0,0.0), 1.0/1.5);
     vec3 nF = carveNormal(hit/uArt);
-    float lam = 0.35 + 0.65*max(dot(nF, normalize(uKeyDir)), 0.0);
-    floorW *= lam * (1.0 - 0.35*smoothstep(0.0,uMaxDepth,d2));
+    vec3 Tl = exp(-uFillAbsorb * (res / max(-Lr.y, 0.2)) * 0.55);
+    vec3 Ta = exp(-uFillAbsorb * res * 1.3 * 0.55);
+    float eKey = max(dot(nF, -Lr), 0.0) * (1.0 - schlick(max(Lk.y, 0.0)));
+    float eTop = max(Lk.y, 0.0);
+    vec3 E = (uKeyShare * eKey * Tl + (1.0 - uKeyShare) * aoAt(hit/uArt) * Ta) / max(uKeyShare * eTop + (1.0 - uKeyShare), 1e-3);
     vec3 tr = exp(-uFillAbsorb * L * 0.55);
-    col = floorW*tr + uFillScatter*(1.0-tr);
-    sRough = 0.04; sCoat = 1.0; sCoatRough = uSanded ? max(uFinishCoatRough*0.5,0.04) : 0.02;
+    col = floorA * E * tr + uFillScatter * (1.0 - tr);
     if (uFillType == 3){
       col = mix(uFillColor, col, 0.25);
       float k = 1.0 - exp(-L*0.8);
       sEmis = uGlowColor * uGlow * 0.35 * (0.2 + 0.8*k);
     }
+    sRough = 0.5;
   }
   return col;
 }
@@ -259,7 +347,7 @@ void surface(){
   float g = tg.g;
   vec3 Vw = normalize(P + uOrigin - cameraPosition);
   sMetal = 0.0; sCoat = uFinish.w; sCoatRough = uFinishCoatRough; sEmis = vec3(0.0); sAO = 1.0; sOverrideN = true; sSpec = 1.0;
-  sN = vec3(0.0,1.0,0.0);
+  sN = vec3(0.0,1.0,0.0); sNc = vec3(0.0);
 #if CARVE_PART == 1
   // board edges and underside: live solid wood (small on screen)
   float wr;
@@ -273,15 +361,16 @@ void surface(){
   float hz = fillH(P.xz + vec2(0.0, e)) - fillH(P.xz - vec2(0.0, e));
   sN = normalize(vec3(-hx / (2.0*e), 1.0, -hz / (2.0*e)));
   if (uMode == 2 || uMode == 3){
+    // the plug before levelling: bandsawn face (rough, no finish yet), its own grain angle
     vec4 B = bakeB(P.xz);
-    sAlb = B.rgb * fibre(P, uMode==2 ? 1 : 0) * 0.97; sRough = B.a + 0.18; sCoat = 0.0;
+    sAlb = B.rgb * fibre(plugP(P), uMode==2 ? 1 : 0) * 0.97; sRough = clamp(B.a + 0.2, 0.05, 1.0); sCoat = 0.0;
   } else {
     sAlb = fillSurface(P, P.y + d, Vw);
+    sNc = sN;                                   // resin surface = the pour's meniscus
   }
 #else
   float fwd = max(fwidth(d), 1e-4);
   float cov = smoothstep(-fwd, fwd, d - uEdge);          // 1 inside the carve
-  float lineW = smoothstep(fwd*2.5, 0.0, abs(d - uEdge)); // the cut line itself
   vec3 nC = uFlat ? vec3(0.0,1.0,0.0) : carveNormal(uv);
   sN = nC;
   float yy = uFlat ? 0.0 : -d;
@@ -293,14 +382,14 @@ void surface(){
   float rTop = clamp(A.a + uFinish.z, 0.05, 1.0);
 
   if (uMode == 0 || (!uFlat && uMode != 4)){
-    // raw carve: cut faces slightly duller, end grain (walls across the fibres) darker, cavity AO
+    // raw carve: tool-cut faces slightly duller; walls that cut across the fibres expose end grain, which drinks finish
+    // (darker, rougher). Occlusion from the baked sky-visibility map (indirect light only).
     float endg = abs(nC.x) * (1.0 - nC.y);
-    vec3 cut = woodTop * mix(0.92, 0.78, clamp(endg*1.6,0.0,1.0));
+    vec3 cut = woodTop * mix(0.94, 0.80, clamp(endg*1.6,0.0,1.0));
     sAlb = mix(woodTop, cut, cov);
-    sRough = mix(rTop, min(rTop+0.12,1.0), cov);
+    sRough = mix(rTop, min(rTop + 0.10 + 0.15*clamp(endg*1.6,0.0,1.0), 1.0), cov);
     sCoat = mix(uFinish.w, uFinish.w*0.5, cov);
-    float narrow = 1.0 - g;
-    sAO = 1.0 - cov*(0.25*smoothstep(0.0,uMaxDepth,d) + 0.35*narrow*smoothstep(0.0,1.2,d));
+    sAO = aoAt(uv);
     return;
   }
   if (uMode == 4){
@@ -315,27 +404,32 @@ void surface(){
     sRough = mix(rTop, cr, m);
     sCoat = mix(uFinish.w, 0.0, m);
     sSpec = mix(1.0, 0.45, m);
-    sAO = 1.0 - m*0.35*smoothstep(0.0,uMaxDepth,d);
+    sAO = aoAt(uv);
     return;
   }
-  // flush fills
+  // flush fills (the surface is flat: nothing occludes it)
   if (uMode == 1){
     vec3 fc = fillSurface(vec3(P.x,0.0,P.z), d, Vw);
-    float fm = sMetal, fR = sRough, fC = sCoat, fCR = sCoatRough; vec3 fE = sEmis;
+    float fm = sMetal, fR = sRough, fC = sCoat, fCR = sCoatRough, fS = sSpec; vec3 fE = sEmis, fN = sN;
     // resin wicks into the end grain right at the line: a faint darker rim in the wood
     vec3 wd = woodTop * (1.0 - 0.07*smoothstep(0.38,0.5,g)*(1.0-cov));
     sAlb = mix(wd, fc, cov);
     sMetal = fm*cov; sRough = mix(rTop, fR, cov); sCoat = mix(uFinish.w, fC, cov); sCoatRough = mix(uFinishCoatRough, fCR, cov);
-    sEmis = fE*cov;
+    sSpec = mix(1.0, fS, cov); sEmis = fE*cov;
+    sN = normalize(mix(vec3(0.0,1.0,0.0), fN, cov)); sNc = vec3(0.0,1.0,0.0);
     return;
   }
-  // wood inlay / reverse inlay (reverse: insert species is the field, base species shows the design)
+  // wood inlay / reverse inlay (reverse: insert species is the field, base species shows the design). The plug is its
+  // own board (own log, own grain angle), levelled flush; the joint shows as a thin glue line of real width (~0.1 mm),
+  // box-filtered against the pixel so it stays a hairline at any zoom instead of a fat outline.
   vec4 B = bakeB(P.xz);
-  vec3 ins = applyFinish(B.rgb * fibre(vec3(P.x, 0.0, P.z), uMode==2 ? 1 : 0));
-  vec3 fieldW = woodTop;
-  float glue = lineW * 0.38;
-  sAlb = mix(fieldW, ins, cov) * (1.0 - glue);
-  sRough = mix(rTop, clamp(B.a+uFinish.z,0.05,1.0), cov);
+  vec3 ins = applyFinish(B.rgb * fibre(plugP(vec3(P.x, 0.0, P.z)), uMode==2 ? 1 : 0));
+  float slope = max(length(vec2(hx_(uv), hz_(uv))), 0.05);      // depth per mm across the wall at the line
+  float dist = (d - uEdge) / slope;                               // signed mm from the cut line (+ inside the plug)
+  float px = length(vec2(length(dFdx(P.xz)), length(dFdy(P.xz)))) * 0.7071;
+  float glue = lineCover(dist, 0.10, px) * 0.85;
+  sAlb = mix(mix(woodTop, ins, cov), uGlueCol, glue);
+  sRough = mix(mix(rTop, clamp(B.a+uFinish.z,0.05,1.0), cov), 0.6, glue);
 #endif
 }
 #endif
@@ -348,7 +442,8 @@ varying vec2 vUv;
 void bakeMain(){
   vec2 P = uBakeRect.xy + vUv * uBakeRect.zw;
   float d = uBakeFlat ? 0.0 : tex(P / uArt).r * uMaxDepth;
-  float r; vec3 c = wood(vec3(P.x, -d, P.y), uBakeK, r);
+  vec3 wp = vec3(P.x, -d, P.y); if (uBakeFlat) wp = plugP(wp);
+  float r; vec3 c = wood(wp, uBakeK, r);
   gl_FragColor = vec4(c * 0.75, clamp(r, 0.0, 1.0));
 }
 #endif

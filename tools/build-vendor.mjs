@@ -11,11 +11,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = path.join(root, 'app'), vendor = path.join(app, 'vendor'), src = path.join(root, 'tools', 'vendor-src');
 mkdirSync(vendor, { recursive: true });
 
-// 1. three.js trimmed to exactly what app/js uses (THREE.Xxx names + the six addons)
+// 1. three.js trimmed to exactly what app/js uses (THREE.Xxx names + the five addons)
 const used = new Set();
 for (const f of readdirSync(path.join(app, 'js')).filter((f) => f.endsWith('.js')))
   for (const m of readFileSync(path.join(app, 'js', f), 'utf8').matchAll(/THREE\.([A-Za-z0-9_]+)/g)) used.add(m[1]);
-const addons = { OrbitControls: 'controls/OrbitControls.js', RoomEnvironment: 'environments/RoomEnvironment.js',
+const addons = { OrbitControls: 'controls/OrbitControls.js',
   EffectComposer: 'postprocessing/EffectComposer.js', RenderPass: 'postprocessing/RenderPass.js',
   UnrealBloomPass: 'postprocessing/UnrealBloomPass.js', OutputPass: 'postprocessing/OutputPass.js' };
 const entry = `export { ${[...used].sort().join(', ')} } from 'three';\n` +

@@ -467,6 +467,25 @@ function viewerTexture(u16, tw, th, artW) {
   for (let i = 0; i < n; i++) { out[2 * i] = toHalf(u16[i] / md); out[2 * i + 1] = toHalf(mask[i]); }
   return out;
 }
+// Baked ambient occlusion of the carve (Relief Forge style multi-scale cavity): how far each point sits below the mean
+// height around it, per mm of radius, at 0.4 / 1.2 / 3.6 mm. Scaled so the bottom of a deep 60 degree V groove loses half
+// its sky (a V groove of half-angle 30 deg sees sin 30 = 0.5 of the cosine-weighted sky), so 100 % is about physical.
+// The top face (never below its neighbourhood) stays at 0. One byte per texel, sampled only for indirect light.
+function aoTexture(u16, tw, th, artW, maxDepth) {
+  const n = tw * th, d = new Float32Array(n), b = new Float32Array(n), t = new Float32Array(n), occ = new Float32Array(n);
+  const k = maxDepth / 65535;
+  for (let i = 0; i < n; i++) d[i] = u16[i] * k;
+  const px = tw / artW;
+  for (const [rmm, w] of [[0.4, 0.3], [1.2, 0.35], [3.6, 0.35]]) {
+    const r = Math.max(1, Math.round(rmm * px)), rr = r / px;
+    boxBlurH(d, t, tw, th, r); boxBlurV(t, b, tw, th, r);
+    const s = w * 0.58 / rr;
+    for (let i = 0; i < n; i++) { const v = d[i] - b[i]; if (v > 0) occ[i] += v * s; }
+  }
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.round(Math.min(occ[i], 0.9) * 255);
+  return out;
+}
 const _f32 = new Float32Array(1), _u32 = new Uint32Array(_f32.buffer);
 function toHalf(v) {                       // float -> IEEE half; values here are 0..1
   if (!(v > 0)) return 0;
@@ -535,8 +554,9 @@ async function process(src, params, doTrace) {
   const tex = depthTexture(safe, w, h, W, H, a, useSvgDepth ? depthDs : null); lap('depth');
   res.tex = { w: tex.tw, h: tex.th, max_depth: a.depth };
   const rg = viewerTexture(tex.u16, tex.tw, tex.th, W); lap('viewer_tex');
+  const ao = aoTexture(tex.u16, tex.tw, tex.th, W, a.depth); lap('viewer_ao');
   const ovl = overlayImage(w, h, layers); lap('overlay');
-  const blobs = { depth: tex.u16.buffer, depthRG: rg.buffer, overlay: await toPngBlob(ovl, 'rgba') }; lap('overlay_png');
+  const blobs = { depth: tex.u16.buffer, depthRG: rg.buffer, ao: ao.buffer, overlay: await toPngBlob(ovl, 'rgba') }; lap('overlay_png');
   blobs.mask = await toPngBlob(maskImage(safe, w, h), 'gray'); lap('mask_png');
   if (svgText) {
     blobs.svg = svgText;
@@ -562,7 +582,7 @@ self.onmessage = async (e) => {
       const src = sources.get(m.id);
       if (!src) throw new Error('source not loaded');
       const out = await process(src, m.params || {}, !!m.trace);
-      self.postMessage({ rid: m.rid, ok: true, ...out }, [out.blobs.depth, out.blobs.depthRG]);
+      self.postMessage({ rid: m.rid, ok: true, ...out }, [out.blobs.depth, out.blobs.depthRG, out.blobs.ao]);
     } else if (m.type === 'debugMask') {       // test hook: the masks the reference compares against
       const src = sources.get(m.id), a = makeArgs(m.params || {}), r = buildMask(src, a);
       self.postMessage({ rid: m.rid, ok: true, w: r.w, h: r.h, raw: r.raw, safe: r.safe, rgba: src.img ? src.img.data : null, sw: src.w, sh: src.h });
