@@ -100,11 +100,14 @@
     </section>
     <section class="card">
       <h3>Fill</h3>
-      <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Inlay</button><button data-v="reverse">Reverse</button><button data-v="char">Char</button></div>
-      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div></div>
-      <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species</div><div class="chips wood" id="inserts"></div></div>
-      <div id="fillChar" class="sub hidden"><div class="hint">Light board, grooves torched black, face sanded back clean.</div>
-        <div class="slider" data-k="charScale" data-min="0.4" data-max="3" data-step="0.05" data-v="1.25" data-u="mm" data-label="Char texture" data-scope="view"></div></div>
+      <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Wood inlay</button></div>
+      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
+        <div class="grp">Your colour</div>
+        <div class="custom" id="custom" title="Pick any colour: it shows as that resin type">
+          <label class="pick"><input type="color" id="customColor" value="#b5452c"><span id="customSw"></span></label>
+          <div class="seg small inline" id="customType"><button data-v="0" class="on">Opaque</button><button data-v="1">Metallic</button><button data-v="2">Tinted</button></div>
+        </div></div>
+      <div id="fillInlay" class="sub hidden"><div class="sublabel">Inlay species (fills the carve)</div><div class="chips wood" id="inserts"></div></div>
       <div class="row" id="sandRow"><label title="Off shows the fill as poured or glued, before the face is sanded">Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
       <div id="pourCtl" class="sub hidden">
         <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat)"></div>

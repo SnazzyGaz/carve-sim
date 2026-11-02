@@ -185,7 +185,6 @@ async def main():
             ('fill_epoxy_ocean', "app.set({material:{fill:'epoxy', fillPreset:'ocean'}})"),
             ('unsanded_overpour', "app.set({material:{sanded:false}})"),
             ('sanded_again', "app.set({material:{sanded:true}})"),
-            ('fill_char', "app.set({material:{fill:'char'}})"),
             ('light_dir_slider', "(() => { const i = document.querySelector('.slider[data-k=az] input'); i.value = 140; i.dispatchEvent(new Event('input')); })()"),
         ]
         for name, js in steps:

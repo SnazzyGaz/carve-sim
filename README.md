@@ -9,7 +9,7 @@ A browser showroom for CNC carvings. Drop in a finished SVG (ideally one made by
 ## What it does
 
 - **Reads the carve from the SVG.** V-carve, pockets, stepped pocket levels and engrave lines, at the file's real size, bit angle and depths.
-- **Shows it in real materials.** Nine wood species, raw or oiled. Fills: epoxy (opaque, metallic or translucent), wood inlay, reverse inlay, or charred grooves. Epoxy can be shown sanded flush or as poured.
+- **Shows it in real materials.** Sixteen woods (pale, mid, dark and red, grouped by tone) plus MDF, raw or oiled. Fills: epoxy in suggested colours or any colour you pick (opaque, metallic or tinted), or a wood inlay. Fills can be shown sanded flush or as poured.
 - **Lights it for judging the carve.** Studio, Raking (shows depth and wall quality), Overhead and Daylight presets, with direction and brightness controls.
 - **Lets you compare.** Preset camera views, a slow turntable, and A/B looks to flip between two material choices.
 - **Exports a PNG** of the view, up to 4× resolution.

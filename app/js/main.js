@@ -1,7 +1,7 @@
 // Carve Sim · SVG showroom. Import a finished SVG (from the CNC skill or any vector art) -> one bake in a worker ->
 // the 3D board in your choice of wood, finish, fill and light. The old image tracer is a lazy side panel (trace-panel.js).
 import { Viewer } from './viewer.js';
-import { SPECIES, FINISHES, FILLS, LIGHTS } from './materials.js';
+import { SPECIES, FINISHES, FILLS, LIGHTS, customFill } from './materials.js';
 import { parseSvg, rasterFor, DEFAULT_WIDTH_MM } from './svg-import.js';
 
 const $ = (s) => document.querySelector(s);
@@ -34,7 +34,6 @@ for (const el of $$('.slider')) {
     if (el.dataset.scope === 'view') {
       viewer.interact();                 // draft frames while dragging, full quality when it stops
       if (k === 'fillLevel' || k === 'menisc') { const o = { [k]: v }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); }
-      else if (k === 'charScale') { viewer.uniforms.uCharScale.value = v; viewer.dirty = true; }
       else viewer.setLighting({ [k]: v });   // az, bright
     }
     el.dispatchEvent(new CustomEvent('slide', { detail: v }));
@@ -57,7 +56,9 @@ function segSet(sel, v) { $$(sel + ' button').forEach((x) => x.classList.toggle(
 // ---------------------------------------------------------------- material UI
 const woodSwatch = (s) => `linear-gradient(90deg, ${s.early} 0 18%, ${s.late} 22% 26%, ${s.early} 30% 52%, ${s.late} 56% 61%, ${s.early} 66% 84%, ${s.late} 88% 92%, ${s.early} 96%)`;
 function woodChips(sel, key) {
-  $(sel).innerHTML = Object.entries(SPECIES).map(([k, s]) => `<button data-v="${k}"><span class="sw" style="background:${woodSwatch(s)}"></span>${s.name}</button>`).join('');
+  let grp = '';   // grouped by tone, so the right board is quick to find
+  $(sel).innerHTML = Object.entries(SPECIES).map(([k, s]) => (s.group !== grp ? `<div class="grp">${(grp = s.group)}</div>` : '') +
+    `<button data-v="${k}"><span class="sw" style="background:${woodSwatch(s)}"></span>${s.name}</button>`).join('');
   $$(sel + ' button').forEach((b) => b.onclick = () => { $$(sel + ' button').forEach((x) => x.classList.toggle('on', x === b)); viewer.setMaterial({ [key]: b.dataset.v }); });
   segSet(sel, viewer.state[key]);
 }
@@ -72,16 +73,25 @@ seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', view
     html += `<button data-v="${k}"><span class="sw" style="background:${bg}"></span>${f.name}</button>`;
   }
   $('#resins').innerHTML = html;
-  $$('#resins button').forEach((b) => b.onclick = () => { $$('#resins button').forEach((x) => x.classList.toggle('on', x === b)); viewer.setMaterial({ fillPreset: b.dataset.v }); });
+  $$('#resins button').forEach((b) => b.onclick = () => { $$('#resins button').forEach((x) => x.classList.toggle('on', x === b)); viewer.setMaterial({ fillPreset: b.dataset.v }); customUI(); });
   segSet('#resins', viewer.state.fillPreset);
 }
+// your own colour: the picker or the type switch selects the custom resin; the presets above stay as suggestions
+const resinSw = (f) => f.type === 1 ? `linear-gradient(135deg, ${f.color}, #fff8 45%, ${f.color} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
+function customUI() {
+  const S = viewer.state; $('#customColor').value = S.customColor; segSet('#customType', String(S.customType));
+  $('#customSw').style.background = resinSw(customFill(S.customColor, +S.customType));
+  $('#custom').classList.toggle('on', S.fillPreset === 'custom');
+}
+function useCustom(o) { viewer.interact(); viewer.setMaterial({ ...o, fillPreset: 'custom' }); segSet('#resins', 'custom'); customUI(); }
+$('#customColor').addEventListener('input', (e) => useCustom({ customColor: e.target.value }));
+seg('#customType', (v) => useCustom({ customType: +v }));
+customUI();
 function fillUI(v) {
   $('#fillEpoxy').classList.toggle('hidden', v !== 'epoxy');
-  $('#fillInlay').classList.toggle('hidden', !(v === 'inlay' || v === 'reverse'));
-  $('#fillChar').classList.toggle('hidden', v !== 'char');
-  $('#sandRow').classList.toggle('hidden', v === 'none' || v === 'char');
+  $('#fillInlay').classList.toggle('hidden', v !== 'inlay');
+  $('#sandRow').classList.toggle('hidden', v === 'none');
   pourUI();
-  $('#inlayLabel').textContent = v === 'reverse' ? 'Field species (the board shows through as the design)' : 'Inlay species (fills the carve)';
 }
 // as-poured controls only mean something before the face is sanded, so they appear when Sanded flush is off
 function pourUI() { $('#pourCtl').classList.toggle('hidden', !(viewer.state.fill === 'epoxy' && !viewer.state.sanded)); }
@@ -110,7 +120,7 @@ $$('.tabs>button').forEach((b) => b.onclick = () => {
 
 // ---------------------------------------------------------------- look A / B
 // two complete looks (wood, finish, fill, light) to flip between; edits always go to the active letter
-const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'insert', 'sanded', 'fillLevel', 'flood', 'menisc'];
+const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'customColor', 'customType', 'insert', 'sanded', 'fillLevel', 'flood', 'menisc'];
 const LOOK_L = ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao', 'bright', 'shadows', 'backdrop'];
 const looks = { A: null, B: null }; let lookOn = 'A';
 const grabLook = () => { const S = viewer.state, m = {}, l = { light: S.light }; for (const k of LOOK_M) m[k] = S[k]; for (const k of LOOK_L) l[k] = S[k]; return { m, l }; };
@@ -309,7 +319,7 @@ $('#btnPng').onclick = async () => {
 
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
-  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
+  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
   if (o.light) { viewer.setLighting(o.light); syncLightSliders(); }
   if (o.view) viewer.setView(o.view);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);

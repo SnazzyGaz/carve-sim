@@ -25,10 +25,14 @@ uniform vec4 uBoardRect;      // board top in board mm: x0, z0, width, height
 varying vec3 vBoard;
 const float DIST_MAX = 8.0;
 bool outArt(vec2 uv){ return uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0; }
+// Outside the art (the board margin) the cut distance carries on from the art's edge: the edge texel's value (never
+// inside a cut) minus the mm out to that point. It used to jump to a fixed -1 mm, which the per-pixel coverage
+// (sd / fwidth(sd)) read as an outline, so a thin line of "carve" or fill colour ran round the art rectangle.
 vec4 sdfT(vec2 uv){
-  if (outArt(uv)) return vec4(-1.0, 0.0, 0.0, 1.0);
-  vec4 t = texture2D(uDepth, uv);
+  vec2 c = clamp(uv, 0.0, 1.0);
+  vec4 t = texture2D(uDepth, c);
   if (uFK.y > 0.0) t.ba = uFK;
+  if (c != uv) { t.r = min(t.r, 0.0) - length((uv - c) * uArt); t.g = 0.0; }
   return t;
 }
 vec4 stepsT(vec2 uv){ return outArt(uv) ? vec4(-8.0) : texture2D(uSteps, uv); }
