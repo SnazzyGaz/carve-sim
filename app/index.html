@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Carve Sim</title>
+<link rel="stylesheet" href="css/app.css">
+<!-- three.js trimmed to the modules used (tools/build-vendor.mjs); every import resolves to one local file -->
+<script type="importmap">{
+ "imports": {
+  "three": "./vendor/three-lite.min.js",
+  "three/addons/controls/OrbitControls.js": "./vendor/three-lite.min.js",
+  "three/addons/environments/RoomEnvironment.js": "./vendor/three-lite.min.js",
+  "three/addons/postprocessing/EffectComposer.js": "./vendor/three-lite.min.js",
+  "three/addons/postprocessing/RenderPass.js": "./vendor/three-lite.min.js",
+  "three/addons/postprocessing/UnrealBloomPass.js": "./vendor/three-lite.min.js",
+  "three/addons/postprocessing/OutputPass.js": "./vendor/three-lite.min.js"
+ }
+}</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark"></span><span class="word">CARVE<b>SIM</b></span></div>
+  <div class="file" id="fileName">No artwork loaded</div>
+  <div class="status" id="status"><i></i><span>Idle</span></div>
+  <div class="actions">
+    <button class="btn ghost" id="btnSvg" disabled>Export SVG</button>
+    <button class="btn ghost" id="btnStats" disabled>Stats JSON</button>
+    <button class="btn primary" id="btnPng" disabled>Render PNG</button>
+  </div>
+</header>
+<main class="layout">
+  <aside class="panel left">
+    <section>
+      <h3>Artwork</h3>
+      <label class="drop" id="drop">
+        <input type="file" id="fileIn" accept=".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml" hidden>
+        <img id="thumb" alt="">
+        <div class="dropText"><b>Drop black &amp; white art</b><span>PNG, JPG or SVG — or click to browse</span></div>
+      </label>
+      <div class="samples" id="samples"></div>
+    </section>
+    <section>
+      <h3>Trace</h3>
+      <div class="row"><label>Threshold</label><select id="thrMode"><option value="value">Value</option><option value="auto">Auto (Otsu)</option><option value="adaptive">Adaptive</option></select></div>
+      <div class="slider" data-k="threshold" data-min="1" data-max="254" data-step="1" data-v="128" data-u=""></div>
+      <div class="slider" data-k="smooth" data-min="0" data-max="5" data-step="0.1" data-v="0.8" data-u="" data-label="Smoothing"></div>
+      <div class="slider" data-k="min_feature" data-min="0.1" data-max="3" data-step="0.05" data-v="0.5" data-u="mm" data-label="Min feature"></div>
+      <div class="slider" data-k="width_mm" data-min="50" data-max="1200" data-step="5" data-v="300" data-u="mm" data-label="Finished width"></div>
+      <div class="row"><label>Invert (cut the light)</label><input type="checkbox" class="tog" id="invert"></div>
+      <div class="row svgonly hidden"><label>Re-trace SVG with bit rules</label><input type="checkbox" class="tog" id="svg_retrace"></div>
+      <div class="row"><label>Auto-trace</label><input type="checkbox" class="tog" id="autoTrace" checked></div>
+      <button class="btn block" id="btnTrace" disabled>Trace now</button>
+    </section>
+    <section>
+      <h3>Bit &amp; machine</h3>
+      <div class="seg" id="mode"><button data-v="vcarve" class="on">V-carve</button><button data-v="pocket">Pocket</button></div>
+      <div class="slider" data-k="vbit_angle" data-min="20" data-max="150" data-step="1" data-v="60" data-u="°" data-label="V-bit angle"></div>
+      <div class="chips mini" id="vbitChips"><button data-v="30">30°</button><button data-v="60" class="on">60°</button><button data-v="90">90°</button><button data-v="120">120°</button></div>
+      <div class="slider" data-k="depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="Max depth"></div>
+      <div class="slider" data-k="tool_dia" data-min="0.5" data-max="12.7" data-step="0.025" data-v="3.175" data-u="mm" data-label="End mill Ø"></div>
+      <div class="slider" data-k="fragile_mm" data-min="0.3" data-max="3" data-step="0.1" data-v="1.0" data-u="mm" data-label="Flag strips under"></div>
+      <div class="grid3">
+        <label>Feed<input type="number" id="feed" value="1200" step="50"></label>
+        <label>Plunge<input type="number" id="plunge" value="300" step="25"></label>
+        <label>Rapid<input type="number" id="rapid" value="3000" step="100"></label>
+      </div>
+      <div class="hint">mm/min · stepover 40% · safe Z 5 mm</div>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <div class="tabs">
+      <button data-tab="3d" class="on">3D board</button>
+      <button data-tab="2d">2D trace</button>
+      <div class="spacer"></div>
+      <div class="views" id="views">
+        <button data-view="top" title="Top down">Top</button>
+        <button data-view="angle" title="Three-quarter">Angle</button>
+        <button data-view="low" title="Low, raking">Low</button>
+        <button data-view="corner" title="Corner detail">Corner</button>
+        <button data-view="close" title="Close-up on the orbit centre (double-click the board to set it)">Close-up</button>
+      </div>
+    </div>
+    <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a black &amp; white graphic</b><span>It's traced to a CNC-ready SVG with your bit rules, then carved here in 3D.</span></div></div></div>
+    <div class="viewport hidden" id="vp2d">
+      <div class="twod">
+        <div class="layers">
+          <div class="seg small" id="layer2d"><button data-v="trace" class="on">Traced SVG</button><button data-v="source">Source</button><button data-v="mask">Tool-safe mask</button></div>
+          <label class="ck"><input type="checkbox" id="showFlags" checked> Show flags</label>
+          <div class="legend"><span class="lg red"></span>Dropped detail <span class="lg purple"></span>Bridged <span class="lg orange"></span>Fragile strip <span class="lg blue"></span>Needs clearance</div>
+        </div>
+        <div class="imgwrap" id="imgwrap"><img id="img2d" alt=""><img id="ovl2d" alt=""></div>
+      </div>
+    </div>
+    <div class="busy hidden" id="busy"><div class="spin"></div><span id="busyText">Tracing…</span></div>
+  </section>
+
+  <aside class="panel right">
+    <section>
+      <h3>Stats</h3>
+      <div class="stats" id="stats"><div class="muted">Load artwork to see the job.</div></div>
+      <div class="warns" id="warns"></div>
+    </section>
+    <section>
+      <h3>Board</h3>
+      <div class="chips wood" id="species"></div>
+      <div class="seg small" id="finish"></div>
+    </section>
+    <section>
+      <h3>Fill</h3>
+      <div class="seg" id="fill"><button data-v="none" class="on">Raw</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Inlay</button><button data-v="reverse">Reverse</button><button data-v="char">Char</button></div>
+      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
+        <div class="slider" data-k="glow" data-min="0" data-max="6" data-step="0.1" data-v="2.2" data-u="" data-label="Glow strength" data-scope="view"></div></div>
+      <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species</div><div class="chips wood" id="inserts"></div></div>
+      <div id="fillChar" class="sub hidden"><div class="hint">Light board, grooves torched black, face sanded back clean.</div>
+        <div class="slider" data-k="charScale" data-min="0.4" data-max="3" data-step="0.05" data-v="1.25" data-u="mm" data-label="Char cell size" data-scope="view"></div></div>
+      <div class="row" id="sandRow"><label>Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
+    </section>
+    <section>
+      <h3>Light &amp; scene</h3>
+      <div class="row"><label>Preset</label><select id="lightPreset"></select></div>
+      <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Light direction" data-scope="view"></div>
+      <div class="slider" data-k="el" data-min="4" data-max="88" data-step="1" data-v="42" data-u="°" data-label="Light height" data-scope="view"></div>
+      <div class="slider" data-k="key" data-min="0" data-max="6" data-step="0.05" data-v="2.0" data-u="" data-label="Key light" data-scope="view"></div>
+      <div class="slider" data-k="env" data-min="0" data-max="2" data-step="0.01" data-v="0.5" data-u="" data-label="Ambient" data-scope="view"></div>
+      <div class="slider" data-k="exposure" data-min="0.3" data-max="2.5" data-step="0.01" data-v="1" data-u="" data-label="Exposure" data-scope="view"></div>
+      <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
+      <div class="row"><label>Mesh detail</label><select id="meshRes"><option value="512">Draft</option><option value="1024" selected>Fine</option><option value="2048">Max</option></select></div>
+      <div class="row"><label>Render scale</label><select id="pngScale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></div>
+    </section>
+  </aside>
+</main>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
