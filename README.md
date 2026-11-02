@@ -92,11 +92,11 @@ The 3D view displaces a static grid on the GPU from the depth texture, bakes the
 
 ## Known gaps
 
-- Showroom depth is a model of the carve, not a toolpath simulation: the V-carve uses the distance to the nearest edge (an ideal V-bit with a depth limit), so sharp inside corners come out perfectly sharp; pockets have no end-mill corner radius; no clearing tool or step-over is modelled. The texture is 2048 texels on the long side (≈0.15 mm/texel at 300 mm), so detail finer than that (and strokes under ~0.3 mm) is averaged away.
+- Showroom depth is a model of the carve, not a toolpath simulation: the V-carve uses the exact distance to the nearest path edge, computed from the SVG geometry (an ideal V-bit with a depth limit), so sharp inside corners come out perfectly sharp; pockets have no end-mill corner radius; no clearing tool or step-over is modelled. The texture is 2048 texels on the long side (≈0.15 mm/texel at 300 mm), so detail finer than that (and strokes under ~0.3 mm) is averaged away. Outlines and walls themselves are exact to the path (signed distance field, see docs/showroom.md), not stepped at the texel or mesh grid.
 - Generic (non-CNC) SVGs are drawn by the browser on the main thread and thresholded at mid-grey: colours carve by brightness, and anti-aliased or semi-transparent art can carve a little differently from what the CAM software would make of the paths.
-- A px/unitless SVG has no physical size, so it is shown 300 mm wide; set **Board width** to the real size.
+- A px/unitless SVG has no physical size, so it is shown 300 mm wide (the Job panel says so); give the file a mm/in `width` to set the real size. The showroom has no carve controls: bit, depths and size come from the file, with fixed defaults where it is silent.
 - OpenCV (tracer only) is the stock build (kept whole so the trace stays byte-identical), split into a 128 KB loader and an 11.96 MB `opencv.wasm` (3.5 MB gzipped). It is not loaded until the trace panel is opened.
 - The baked wood texture is 4096 texels on the board's long side, about 12 texels/mm on a 300 mm piece. On very large boards it gets softer in extreme close-ups (the live fibre noise hides most of it). The board's edges still use the live wood shader.
 - The tracer's canvas antialiasing in its 2D previews is a touch different from resvg's (IoU 0.99+).
-- Bloom only shows for glow epoxy, and the pre-sand inlay plug is simplified.
+- Bloom only shows for glow epoxy (kept tight to the lit resin: high threshold, the two finest blur levels only), and the pre-sand inlay plug is simplified.
 - It needs a recent browser (Path2D and OffscreenCanvas in workers, CompressionStream): Chrome/Edge 80+, Firefox 105+, Safari 16.4+.

@@ -215,3 +215,21 @@ Interaction (lag.py and perf.py `change`/`orbit`): every probe is within run-to-
 Worker bake for a 300 mm SVG at 4096² (super-sampled): raster 0.04–0.8 s (engrave strokes are the slowest), distance field ~0.65 s, remap + 2×2 downsample + RG half-float + AO ~0.7 s. Angle/depth/carve-type changes reuse the cached masks and distance fields and only redo the remap.
 
 Caveat: under SwiftShader, a re-bake after a board-size change sometimes takes 3–7 s to settle, almost all of it inside the GPU wood-bake draws (same programs, no shader compile); the worker part stays at ~0.7 s. It varies a lot from run to run (the same vbit change measured 0.76 s and 6.3 s) and the trace build has the same bake path, so it reads as CPU-WebGL contention rather than a regression; worth re-checking on a real GPU.
+
+## Vector-exact edges (exact SDF, per-fragment edges) vs. 72f3f09
+
+Same box and tools, run one after the other (base = 72f3f09, two runs; after = this change). SwiftShader numbers: compare the builds, not the FPS.
+
+| | 72f3f09 (2 runs) | exact SDF |
+|---|---|---|
+| cold open → first 3D / traced 3D | 5.68 / 5.30 s · 10.34 / 9.65 s | 5.59 s · 10.70 s |
+| settled frame | 1075 / 1090 ms | 1253 ms (+16 %) |
+| orbit (draft frames, snap skipped) / after release | 351 / 315 · 658 / 532 ms | 394 · 660 ms |
+| unsanded overpour | 2862 / 2922 ms | 4237 ms (+46 %) |
+| fill char / glow bloom | 1390 / 1441 · 1790 / 1927 ms | 1689 · 2108 ms |
+| bit-angle re-bake settled | 6881 / 7393 ms | 7669 ms |
+| lag: orbit / exposure / first pour / sway | 227 · 376 · 2401 · 2095 ms | 300 · 474 · 3704 · 2499 ms |
+| GPU texture memory | 301.4 MB | 301.4 MB (single-layer files use RG + uniform floor/slope; multi-level pockets add ~17 MB of step textures) |
+| warm import → first frame | fisherman 1.96, eagle 1.40, wolf 1.23, stag 1.41, logo 0.40 s | 2.13, 1.20, 2.04, 1.20, 0.76 s |
+
+The exact segment-distance SDF costs ~0.35–0.45 s per layer in the worker at 2048² (fisherman: 59,672 segments); the wolf pays it per pocket level. Fragment cost rises from the analytic normals plus the 3-step Newton edge snap; draft frames skip the snap. The overpour/pour path is the biggest gap. A bisect ruled out the snap, the wall fallback, texture bandwidth and the fill-hide threshold, so the cause is still open. Re-check on a real GPU before tuning.

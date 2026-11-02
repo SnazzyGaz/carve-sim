@@ -11,7 +11,17 @@ const PRESETS = {
   fine:  { threshold: '128',  smooth: 0.4, min_feature: 0.3 },   // keep hairlines (needs a fine V-bit)
 };
 
-export function initTrace({ $, seg, settings, setStatus, onSvg }) {
+// The bit and depths are one-off trace inputs: used when Trace is pressed and written into the SVG with the skill's
+// conventions (physical width/height, and depth= / vbit_angle= on the "CNC vector" metadata line), so the showroom and
+// the downloaded file both carry them. The engine's own output is left byte-identical to the skill (parity tests).
+export function withCarveMeta(svg, { mode, depth, vbit_angle }) {
+  const extra = ` depth=${+depth.toFixed(2)}mm` + (mode === 'vcarve' ? ` vbit_angle=${+vbit_angle.toFixed(1)}` : '');
+  const re = /(<!--\s*CNC vector\s*\|[^|>]*?)(\s*\|\s*units:)/;
+  if (re.test(svg)) return svg.replace(re, (m, a, b) => a.replace(/\s+(depth|vbit_angle)=\S+/g, '') + extra + b);
+  return svg.replace(/(<svg\b[^>]*>)/, `$1\n<!-- CNC vector | mode=${mode}${extra} | units: mm -->`);
+}
+
+export function initTrace({ $, $$, seg, slider, setStatus, onSvg }) {
   const engine = new Engine();
   let img = null, mode = 'vcarve', last = null;
   const bar = $('#tBar'), note = (t) => ($('#tStatus').textContent = t);
@@ -34,7 +44,15 @@ export function initTrace({ $, seg, settings, setStatus, onSvg }) {
   drop.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) setImage(f, f.name); });
   $('#tFileIn').onchange = (e) => { const f = e.target.files[0]; if (f) setImage(f, f.name); e.target.value = ''; };
   $('#tSample').onclick = async (e) => { e.preventDefault(); e.stopPropagation(); const r = await fetch('samples/old-fisherman.jpg'); setImage(await r.blob(), 'old-fisherman.jpg'); };
-  seg('#tMode', (v) => { mode = v; });
+  const modeUI = () => {
+    for (const k of ['t_vbit', 't_depth']) slider(k).classList.toggle('hidden', mode !== 'vcarve');
+    $('#tVbitChips').classList.toggle('hidden', mode !== 'vcarve');
+    slider('t_pocket').classList.toggle('hidden', mode !== 'pocket');
+  };
+  seg('#tMode', (v) => { mode = v; modeUI(); }); modeUI();
+  const chips = () => { const a = slider('t_vbit').get(); for (const b of $$('#tVbitChips button')) b.classList.toggle('on', +b.dataset.v === a); };
+  $$('#tVbitChips button').forEach((b) => b.onclick = () => { slider('t_vbit').set(+b.dataset.v); chips(); });
+  slider('t_vbit').addEventListener('slide', chips);
 
   async function trace() {
     if (!img) return;
@@ -42,26 +60,27 @@ export function initTrace({ $, seg, settings, setStatus, onSvg }) {
     const t0 = performance.now(); setStatus('busy', 'Tracing…'); note(engine.cvReady ? 'Tracing…' : 'Loading the tracer, then tracing…');
     try {
       const preset = PRESETS[$('#tPreset').value] || PRESETS.line;
-      const params = { ...preset, mode, invert: $('#tInvert').checked, width_mm: settings.width_mm || 300,
-        vbit_angle: settings.vbit_angle, depth: mode === 'pocket' ? settings.pocket_depth : settings.depth };
+      const params = { ...preset, mode, invert: $('#tInvert').checked, width_mm: slider('t_width').get(),
+        vbit_angle: slider('t_vbit').get(), depth: mode === 'pocket' ? slider('t_pocket').get() : slider('t_depth').get() };
       const info = await engine.load(img.blob, img.name);
       const out = await engine.process(info.id, params, true);
       URL.revokeObjectURL(info.thumbUrl);
       if (!out || !out.svg) throw new Error('the tracer returned no SVG');
-      if (last) revoke(last.urls);
+      if (last) { revoke(last.urls); URL.revokeObjectURL(last.svgUrl); }
       const name = `${img.name.replace(/\.[^.]+$/, '')}_${mode}_${Math.round(params.width_mm)}mm.svg`;
-      last = { urls: out.urls, svg: out.svg, name };
+      const svg = withCarveMeta(out.svg, params);
+      last = { urls: out.urls, svg, name, params, svgUrl: URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })) };
       const s = out.res.stats;
       note(`Traced in ${((performance.now() - t0) / 1000).toFixed(1)} s · ${s.paths} paths, ${s.nodes ?? '?'} nodes. Opened below as ${name}.`);
       $('#btnSvg').disabled = false;
-      await onSvg(out.svg, name);
+      await onSvg(svg, name);
     } catch (e) { console.error(e); note('Trace failed: ' + e.message); setStatus('err', 'Trace failed'); }
     finally { btn.disabled = !img; }
   }
   $('#btnTrace').onclick = trace;
   $('#btnSvg').onclick = () => {
     if (!last) return;
-    const a = document.createElement('a'); a.href = last.urls.svg; a.download = last.name; document.body.appendChild(a); a.click(); a.remove();
+    const a = document.createElement('a'); a.href = last.svgUrl; a.download = last.name; document.body.appendChild(a); a.click(); a.remove();
   };
   return { setImage, trace, engine, get last() { return last; } };
 }

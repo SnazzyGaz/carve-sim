@@ -146,11 +146,11 @@ export class Viewer {
   }
 
   makeUniforms() {
-    const blank = new THREE.DataTexture(new Uint16Array(2), 1, 1, THREE.RGFormat, THREE.HalfFloatType); blank.needsUpdate = true;
+    const blank = new THREE.DataTexture(new Uint16Array([0xBC00, 0, 0, 0x3C00]), 1, 1, THREE.RGBAFormat, THREE.HalfFloatType); blank.needsUpdate = true;
     const blankAO = new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType); blankAO.needsUpdate = true;
     const u = {
       uDepth: { value: blank }, uArt: { value: new THREE.Vector2(300, 300) }, uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
-      uMaxDepth: { value: 3 }, uEdge: { value: 0.02 }, uMode: { value: 0 }, uSanded: { value: true }, uFlat: { value: false },
+      uMaxDepth: { value: 3 }, uSteps: { value: this.blankSteps() }, uStepD: { value: new THREE.Vector4() }, uStepK: { value: 1 }, uFK: { value: new THREE.Vector2() }, uGridStep: { value: 0.3 }, uMode: { value: 0 }, uSanded: { value: true }, uFlat: { value: false },
       uOver: { value: 0.9 }, uStep: { value: 0.3 }, uFillLevel: { value: 0 }, uFlood: { value: false }, uMenisc: { value: 0.3 },
       uDist: { value: this.blankDist() }, uBoardRect: { value: new THREE.Vector4(0, 0, 300, 300) },
       uWood: { value: Array.from({ length: 14 }, () => new THREE.Vector4()) }, uFinish: { value: new THREE.Vector4(1, 1, 0, 0) },
@@ -384,37 +384,39 @@ export class Viewer {
   }
 
   // ------------------------------------------------------------ depth -> texture (GPU displacement)
-  // rg: Uint16Array RG half floats (depth / maxDepth, blurred carve mask) built in the worker
-  setDepth(rg, tw, th, artW, artH, maxDepth, ao = null) {
+  // tex: Uint16Array RGBA half floats from the worker: r = signed mm to the cut line (+ inside, exact from the SVG
+  // geometry), g = blurred carve mask, b = floor depth mm, a = wall slope. steps: pocket terraces (levels 2..5), or null.
+  setDepth(tex, tw, th, artW, artH, maxDepth, ao = null, steps = null, fk = null) {
     this.dirty = true; this.shadowDirty = true;
     const first = !this.depth;
-    this.depth = { tw, th, artW, artH, maxDepth }; this.depthVer = (this.depthVer || 0) + 1; this.rg = rg;
-    const U = this.uniforms, old = U.uDepth.value;
-    if (old.image.width === tw && old.image.height === th && old.userData.carve) { old.image.data = rg; old.needsUpdate = true; }
-    else {
-      const t = new THREE.DataTexture(rg, tw, th, THREE.RGFormat, THREE.HalfFloatType);
-      t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
-      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; t.userData.carve = true;
-      U.uDepth.value = t; old.dispose();
-    }
-    if (ao) {
-      const oa = U.uAO.value;
-      if (oa.image.width === tw && oa.image.height === th && oa.userData.carve) { oa.image.data = ao; oa.needsUpdate = true; }
-      else {
-        const t = new THREE.DataTexture(ao, tw, th, THREE.RedFormat, THREE.UnsignedByteType);
-        t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1;
-        t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; t.userData.carve = true;
-        U.uAO.value = t; oa.dispose();
-      }
+    this.depth = { tw, th, artW, artH, maxDepth }; this.depthVer = (this.depthVer || 0) + 1; this.rg = tex; this.rgStride = fk ? 2 : 4;
+    const U = this.uniforms;
+    const upload = (key, data, w, h, fmt, type, tag) => {
+      const old = U[key].value;
+      if (old.image.width === w && old.image.height === h && old.userData.carve === tag) { old.image.data = data; old.needsUpdate = true; return; }
+      const t = new THREE.DataTexture(data, w, h, fmt, type);
+      t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false; t.unpackAlignment = 1;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; t.userData.carve = tag;
+      U[key].value = t; old.dispose();
+    };
+    // RG (sdf, mask) + the file's one floor depth / wall slope as uniforms, or RGBA with them per texel (mixed layers)
+    upload('uDepth', tex, tw, th, fk ? THREE.RGFormat : THREE.RGBAFormat, THREE.HalfFloatType, fk ? 'rg' : 'rgba');
+    U.uFK.value.set(fk ? fk[0] : 0, fk ? fk[1] : 0);
+    if (ao) upload('uAO', ao, tw, th, THREE.RedFormat, THREE.UnsignedByteType, 'ao');
+    if (steps) {
+      upload('uSteps', steps.data, tw, th, steps.nc === 2 ? THREE.RGFormat : THREE.RGBAFormat, THREE.HalfFloatType, 'steps' + steps.nc);
+      U.uStepD.value.set(...steps.d); U.uStepK.value = steps.k;
+    } else {
+      if (U.uSteps.value.userData.carve) { U.uSteps.value.dispose(); U.uSteps.value = this.blankSteps(); }
+      U.uStepD.value.set(0, 0, 0, 0);
     }
     U.uArt.value.set(artW, artH); U.uTexel.value.set(1 / tw, 1 / th); U.uMaxDepth.value = maxDepth;
-    // cut line sits where the area-averaged depth reaches ~1/4 texel of V slope
-    U.uEdge.value = Math.min(0.25 * (artW / tw) * 1.7, maxDepth * 0.05);
     this.buildMeshes();
     this.group.visible = true;
     if (first) this.setView('angle');
     this.placeLight();
   }
+  blankSteps() { const t = new THREE.DataTexture(new Uint16Array([0xC800, 0xC800]), 1, 1, THREE.RGFormat, THREE.HalfFloatType); t.needsUpdate = true; return t; }
 
   // flat grid (x0..x1, z0..z1) at nx*nz quads, plus a half-density index over the same vertices for draft frames (any grid over 160 quads a side)
   grid(x0, z0, x1, z1, nx, nz) {
@@ -474,6 +476,8 @@ export class Viewer {
   applyGrids() {
     const q = this.quality === 'draft' ? 'draft' : 'full';
     this.board.geometry = this.topGrid[q];
+    // vertices snap to the cut contours within about one grid step (draft frames use every other vertex)
+    this.uniforms.uGridStep.value = q === 'draft' && this.topGrid.draft !== this.topGrid.full ? 0 : this.uniforms.uStep.value;   // draft frames (while dragging) skip the edge snap
     if (this.fillGrid) this.fillMesh.geometry = this.fillGrid[q];
   }
 
@@ -558,9 +562,9 @@ export class Viewer {
     this.distVer = this.depthVer;
     const t0 = performance.now(), { tw, th, artW, artH, maxDepth } = D, sc = Math.min(1, 512 / Math.max(tw, th));
     const w = Math.max(2, Math.round(tw * sc)), h = Math.max(2, Math.round(th * sc));
-    const thr = toHalf(Math.max(this.uniforms.uEdge.value, 1e-3) / maxDepth), rg = this.rg;
+    const rg = this.rg;   // r = signed distance as a half float: inside = positive (sign bit clear, not zero)
     const mm = artW / w, big = 1e9, f = new Float32Array(w * h);
-    for (let j = 0; j < h; j++) { const sj = Math.min(th - 1, Math.floor((j + 0.5) / sc)); for (let i = 0; i < w; i++) { const si = Math.min(tw - 1, Math.floor((i + 0.5) / sc)); f[j * w + i] = rg[(sj * tw + si) * 2] > thr ? big : 0; } }
+    for (let j = 0; j < h; j++) { const sj = Math.min(th - 1, Math.floor((j + 0.5) / sc)); for (let i = 0; i < w; i++) { const si = Math.min(tw - 1, Math.floor((i + 0.5) / sc)); const hv = rg[(sj * tw + si) * this.rgStride]; f[j * w + i] = hv > 0 && hv < 0x8000 ? big : 0; } }
     const a = 1, b = 1.4142;
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const k = j * w + i; let v = f[k]; if (!v) continue;
       if (i > 0) v = Math.min(v, f[k - 1] + a); if (j > 0) { v = Math.min(v, f[k - w] + a); if (i > 0) v = Math.min(v, f[k - w - 1] + b); if (i < w - 1) v = Math.min(v, f[k - w + 1] + b); } else v = Math.min(v, a);
@@ -668,7 +672,13 @@ export class Viewer {
     }
     // only the emissive share reaches the bloom (see EMISSIVE_HIGHPASS); a tight radius keeps it a glow on the
     // pigment, not a haze over the board
-    if (this.bloom) { this.bloom.strength = S.env < 0.2 ? 0.55 : 0.3; this.bloom.radius = 0.2; this.bloom.threshold = 0.25; this.bloom.highPassUniforms.smoothWidth.value = 0.25; }
+    // A glow pour photographed in a dim room: the halo hugs the lit resin (only the two finest mips, high threshold so
+    // just the brightest emissive pixels bloom) and the board stays readable around it.
+    if (this.bloom) {
+      const B = this.bloom, dim = S.env < 0.2;
+      B.strength = dim ? 0.5 : 0.28; B.radius = 0.0; B.threshold = 0.4; B.highPassUniforms.smoothWidth.value = 0.2;
+      B.compositeMaterial.uniforms.bloomFactors.value = [1.0, 0.6, 0.22, 0.04, 0.0];
+    }
   }
 
   // ------------------------------------------------------------ camera

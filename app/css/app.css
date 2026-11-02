@@ -127,4 +127,6 @@ details#traceBox .btn{margin-top:8px}
 .dropText a{color:var(--acc)}
 #tBar{margin-top:8px}
 .stats .note{grid-column:1/-1;font-size:11.5px;color:var(--mute);line-height:1.4}
+.stats .v.ro small{color:var(--mute);font-weight:400}
+.stats .v.ro small.dflt{color:#d9a75a}
 .bar{height:4px;border-radius:2px;background:#ffffff1a;overflow:hidden} .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .15s}
