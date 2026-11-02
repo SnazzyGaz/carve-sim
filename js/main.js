@@ -161,7 +161,7 @@ async function run(trace) {
     if (app.result && app.result !== app.traced && app.result !== res) revoke(app.result.urls);
     app.result = res; if (trace) keepTraced(res);
     // the worker already packed the GPU texture; the viewer just uploads it (no mesh rebuild)
-    viewer.setDepth(new Uint16Array(out.depthRG), res.tex.w, res.tex.h, res.size_mm[0], res.size_mm[1], res.tex.max_depth);
+    viewer.setDepth(new Uint16Array(out.depthRG), res.tex.w, res.tex.h, res.size_mm[0], res.size_mm[1], res.tex.max_depth, out.ao ? new Uint8Array(out.ao) : null);
     showStats(res); show2d();
     for (const id of ['#btnSvg', '#btnStats']) $(id).disabled = !trace;
     $('#btnPng').disabled = false;
@@ -227,7 +227,7 @@ $('#btnPng').onclick = async () => {
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
   if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; }
-  if (o.light) { viewer.setLighting(o.light); for (const k of ['az', 'el', 'key', 'env', 'exposure']) slider(k).set(viewer.state[k]); if (o.light.light) $('#lightPreset').value = o.light.light; }
+  if (o.light) { viewer.setLighting(o.light); for (const k of ['az', 'el', 'key', 'env', 'exposure', 'ao']) slider(k).set(viewer.state[k]); if (o.light.light) $('#lightPreset').value = o.light.light; }
   if (o.view) viewer.setView(o.view);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };

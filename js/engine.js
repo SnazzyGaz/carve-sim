@@ -54,7 +54,7 @@ export class Engine {
       if (b.svg) urls.svg = URL.createObjectURL(new Blob([b.svg], { type: 'image/svg+xml' }));
       urls.stats = URL.createObjectURL(new Blob([b.stats], { type: 'application/json' }));
       r.res.key = 'r' + r.rid; r.res.wall_ms = Math.round(performance.now() - t0);
-      q.res({ res: r.res, depth: b.depth, depthRG: b.depthRG, svg: b.svg, urls });
+      q.res({ res: r.res, depth: b.depth, depthRG: b.depthRG, ao: b.ao, svg: b.svg, urls });
     } catch (e) { q.rej(e); }
     finally { this.busy = false; this._pump(); }
   }
