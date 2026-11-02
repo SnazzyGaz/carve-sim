@@ -77,6 +77,7 @@
         <button data-view="top" title="Top down">Top</button>
         <button data-view="angle" title="Three-quarter">Angle</button>
         <button data-view="low" title="Low, raking">Low</button>
+        <label class="sway" title="Turntable: the board sways slowly about the vertical axis (camera and lights stay put)"><input type="checkbox" id="sway"> Sway</label>
         <button data-view="corner" title="Corner detail">Corner</button>
         <button data-view="close" title="Close-up on the orbit centre (double-click the board to set it)">Close-up</button>
       </div>
@@ -110,7 +111,12 @@
       <h3>Fill</h3>
       <div class="seg" id="fill"><button data-v="none" class="on">Raw</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Inlay</button><button data-v="reverse">Reverse</button><button data-v="char">Char</button></div>
       <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
-        <div class="slider" data-k="glow" data-min="0" data-max="6" data-step="0.1" data-v="2.2" data-u="" data-label="Glow strength" data-scope="view"></div></div>
+        <div class="slider" data-k="glow" data-min="0" data-max="6" data-step="0.1" data-v="2.2" data-u="" data-label="Glow strength" data-scope="view"></div>
+        <div id="pourCtl">
+          <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level (as poured)" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat; pinned pours stop at flush)"></div>
+          <div class="row"><label title="Above flush the resin spreads over the board as a thin level flood coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
+          <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage &amp; meniscus" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the channel walls"></div>
+        </div></div>
       <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species</div><div class="chips wood" id="inserts"></div></div>
       <div id="fillChar" class="sub hidden"><div class="hint">Light board, grooves torched black, face sanded back clean.</div>
         <div class="slider" data-k="charScale" data-min="0.4" data-max="3" data-step="0.05" data-v="1.25" data-u="mm" data-label="Char cell size" data-scope="view"></div></div>
@@ -121,10 +127,13 @@
       <div class="row"><label>Preset</label><select id="lightPreset"></select></div>
       <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Light direction" data-scope="view"></div>
       <div class="slider" data-k="el" data-min="4" data-max="88" data-step="1" data-v="42" data-u="°" data-label="Light height" data-scope="view"></div>
-      <div class="slider" data-k="key" data-min="0" data-max="6" data-step="0.05" data-v="2.0" data-u="" data-label="Key light" data-scope="view"></div>
-      <div class="slider" data-k="env" data-min="0" data-max="2" data-step="0.01" data-v="0.5" data-u="" data-label="Ambient" data-scope="view"></div>
-      <div class="slider" data-k="ao" data-min="0" data-max="1" data-step="0.01" data-v="0.6" data-u="" data-label="Ambient occlusion" data-scope="view"></div>
-      <div class="slider" data-k="exposure" data-min="0.3" data-max="2.5" data-step="0.01" data-v="1" data-u="" data-label="Exposure" data-scope="view"></div>
+      <div class="slider" data-k="key" data-min="0" data-max="8" data-step="0.05" data-v="2.0" data-u="" data-label="Key strength" data-scope="view"></div>
+      <div class="slider" data-k="warm" data-min="-1" data-max="1" data-step="0.01" data-v="0.2" data-u="" data-label="Warmth" data-scope="view" title="Key light colour: cool daylight (−) to warm tungsten (+)"></div>
+      <div class="slider" data-k="fillLight" data-min="0" data-max="2" data-step="0.01" data-v="0.25" data-u="" data-label="Fill" data-scope="view" title="Soft cool light opposite the key: lifts the shadow side and the board edges"></div>
+      <div class="slider" data-k="env" data-min="0" data-max="2" data-step="0.01" data-v="0.5" data-u="" data-label="Ambient" data-scope="view" title="Studio environment (reflections and sky light)"></div>
+      <div class="slider" data-k="exposure" data-min="0.2" data-max="2.5" data-step="0.01" data-v="1" data-u="" data-label="Exposure" data-scope="view"></div>
+      <div class="slider" data-k="ao" data-min="0" data-max="1" data-step="0.01" data-v="0.25" data-pct="1" data-label="Ambient occlusion" data-scope="view" title="Darkens the recesses using occlusion baked from the depth map. 0 = off"></div>
+      <div class="row"><label>Cast shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
       <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
       <div class="row"><label>Mesh detail</label><select id="meshRes"><option value="512">Draft</option><option value="1024" selected>Fine</option><option value="2048">Max</option></select></div>
       <div class="row"><label>Render scale</label><select id="pngScale"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select></div>

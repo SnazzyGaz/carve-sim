@@ -109,3 +109,4 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
 .warn.info{background:#151a22;border-color:#26303f;color:#c8d6ea}.warn.info::before{background:var(--info)}
 .warn.ok{background:#141c16;border-color:#24382a;color:#c7e3cc}.warn.ok::before{background:var(--ok)}
 .approx{color:var(--acc2);font-size:11px;margin-top:6px}
+.views .sway{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--mute);padding:0 8px 0 6px;cursor:pointer}.views .sway input{margin:0}

@@ -21,7 +21,7 @@ for (const el of $$('.slider')) {
   const k = el.dataset.k, u = el.dataset.u || '';
   el.innerHTML = `<div class="hd"><span>${el.dataset.label || 'Threshold'}</span><output></output></div><input type="range" min="${el.dataset.min}" max="${el.dataset.max}" step="${el.dataset.step}" value="${el.dataset.v}">`;
   const inp = el.querySelector('input'), out = el.querySelector('output');
-  const paint = () => { const p = (inp.value - inp.min) / (inp.max - inp.min) * 100; inp.style.setProperty('--p', p + '%'); out.textContent = fmt(inp.value, el.dataset.step) + (u ? ' ' + u : ''); };
+  const paint = () => { const p = (inp.value - inp.min) / (inp.max - inp.min) * 100; inp.style.setProperty('--p', p + '%'); out.textContent = el.dataset.pct ? Math.round(inp.value * 100) + '%' : fmt(inp.value, el.dataset.step) + (u ? ' ' + u : ''); };
   paint();
   inp.addEventListener('input', () => {
     paint();
@@ -29,6 +29,7 @@ for (const el of $$('.slider')) {
     if (el.dataset.scope === 'view') {
       viewer.interact();                 // draft frames while dragging, full quality when it stops
       if (k === 'glow') viewer.setMaterial({ glow: v });
+      else if (k === 'fillLevel' || k === 'menisc') { const o = { [k]: v }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); }
       else if (k === 'charScale') { viewer.uniforms.uCharScale.value = v; viewer.dirty = true; }
       else viewer.setLighting({ [k]: v });
     } else { params[k] = v; if (k === 'vbit_angle') syncChips(); schedule(); }
@@ -80,8 +81,12 @@ function fillUI(v) {
 }
 seg('#fill', (v) => { fillUI(v); viewer.setMaterial({ fill: v }); });
 $('#sanded').onchange = (e) => viewer.setMaterial({ sanded: e.target.checked });
+$('#flood').onchange = (e) => { const o = { flood: e.target.checked }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); };
 $('#lightPreset').innerHTML = Object.entries(LIGHTS).map(([k, l]) => `<option value="${k}">${l.name}</option>`).join('');
-$('#lightPreset').onchange = (e) => { viewer.setLighting({ light: e.target.value }); for (const k of ['az', 'el', 'key', 'env']) slider(k).set(viewer.state[k]); };
+$('#lightPreset').onchange = (e) => { viewer.setLighting({ light: e.target.value }); syncLightSliders(); };
+function syncLightSliders() { for (const k of ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao']) slider(k).set(viewer.state[k]); }
+$('#shadows').onchange = (e) => viewer.setLighting({ shadows: e.target.checked });
+$('#sway').onchange = (e) => viewer.setSway(e.target.checked);
 seg('#backdrop', (v) => viewer.setLighting({ backdrop: v }));
 $('#meshRes').onchange = (e) => viewer.setMeshRes(+e.target.value);
 $$('#views button').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
@@ -226,8 +231,8 @@ $('#btnPng').onclick = async () => {
 
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
-  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; }
-  if (o.light) { viewer.setLighting(o.light); for (const k of ['az', 'el', 'key', 'env', 'exposure', 'ao']) slider(k).set(viewer.state[k]); if (o.light.light) $('#lightPreset').value = o.light.light; }
+  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); segSet('#species', viewer.state.species); segSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); }
+  if (o.light) { viewer.setLighting(o.light); syncLightSliders(); if (o.light.light) $('#lightPreset').value = o.light.light; }
   if (o.view) viewer.setView(o.view);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };

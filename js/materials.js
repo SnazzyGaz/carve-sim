@@ -17,7 +17,7 @@ export const FINISHES = {
   raw:   { name: 'Raw sanded', darken: 1.0,  sat: 1.0,  rough: 0.10, coat: 0.0,  coatRough: 0.5 },
   oil:   { name: 'Oiled',      darken: 0.86, sat: 1.12, rough: -0.06, coat: 0.18, coatRough: 0.38 },
   satin: { name: 'Satin',      darken: 0.88, sat: 1.08, rough: -0.04, coat: 0.55, coatRough: 0.26 },
-  gloss: { name: 'Gloss',      darken: 0.86, sat: 1.1,  rough: -0.04, coat: 1.0,  coatRough: 0.05 },
+  gloss: { name: 'Gloss',      darken: 0.86, sat: 1.1,  rough: -0.04, coat: 1.0,  coatRough: 0.03 },
 };
 
 // type: 0 opaque, 1 metallic (metal powder), 2 translucent (tinted, Beer-Lambert), 3 glow
@@ -30,13 +30,13 @@ export const FILLS = {
   cobalt:   { name: 'Cobalt',     group: 'Opaque', type: 0, color: '#1b3f8f', rough: 0.12 },
   oxblood:  { name: 'Oxblood',    group: 'Opaque', type: 0, color: '#5c1016', rough: 0.12 },
   marble:   { name: 'Marble',     group: 'Opaque', type: 0, color: '#e9e6e0', vein: '#55575c', rough: 0.14 },
-  gunmetal: { name: 'Gunmetal',   group: 'Metallic', type: 1, color: '#3d4145', rough: 0.36, f0: '#8a8d90' },
-  bronze:   { name: 'Bronze',     group: 'Metallic', type: 1, color: '#b98a52', rough: 0.3, f0: '#e6bc94' },
-  brass:    { name: 'Brass',      group: 'Metallic', type: 1, color: '#c9a24f', rough: 0.3, f0: '#f5e4ac' },
-  gold:     { name: 'Gold',       group: 'Metallic', type: 1, color: '#e0b347', rough: 0.26, f0: '#ffe29b' },
-  copper:   { name: 'Copper',     group: 'Metallic', type: 1, color: '#c06a43', rough: 0.3, f0: '#f9c9b4' },
+  gunmetal: { name: 'Gunmetal',   group: 'Metallic', type: 1, color: '#3d4145', rough: 0.36, f0: '#7d8186' },
+  bronze:   { name: 'Bronze',     group: 'Metallic', type: 1, color: '#b98a52', rough: 0.3, f0: '#d9a066' },
+  brass:    { name: 'Brass',      group: 'Metallic', type: 1, color: '#c9a24f', rough: 0.3, f0: '#efcf78' },
+  gold:     { name: 'Gold',       group: 'Metallic', type: 1, color: '#e0b347', rough: 0.26, f0: '#ffc356' },
+  copper:   { name: 'Copper',     group: 'Metallic', type: 1, color: '#c06a43', rough: 0.3, f0: '#f0a07a' },
   smoke:    { name: 'Smoky',      group: 'Translucent', type: 2, color: '#2a2622', absorb: [0.9, 0.95, 1.0], scatter: '#14110f', rough: 0.05 },
-  amber:    { name: 'Amber',      group: 'Translucent', type: 2, color: '#d08a2a', absorb: [0.12, 0.45, 1.2], scatter: '#5a2a06', rough: 0.05 },
+  amber:    { name: 'Amber',      group: 'Translucent', type: 2, color: '#d08a2a', absorb: [0.035, 0.12, 0.42], scatter: '#7a4a10', rough: 0.05 },
   ocean:    { name: 'Ocean',      group: 'Translucent', type: 2, color: '#1b8fa0', absorb: [1.3, 0.35, 0.28], scatter: '#053a46', rough: 0.05 },
   emerald:  { name: 'Emerald',    group: 'Translucent', type: 2, color: '#2f9d5a', absorb: [1.1, 0.25, 0.8], scatter: '#063d1c', rough: 0.05 },
   clear:    { name: 'Water clear',group: 'Translucent', type: 2, color: '#ffffff', absorb: [0.03, 0.03, 0.035], scatter: '#000000', rough: 0.04 },
@@ -45,10 +45,14 @@ export const FILLS = {
   glow_blue:{ name: 'Blue glow',  group: 'Glow', type: 3, color: '#d6e2f0', glow: '#3aa0ff', rough: 0.1 },
 };
 
+// light presets after Relief Forge 2.0.7 (key strength, warmth -1..1, cool fill opposite the key, exposure) plus the studio
+// environment level (Ambient)
 export const LIGHTS = {
-  studio:  { name: 'Studio soft',  az: 220, el: 42, key: 2.0, env: 0.5, warm: '#fff4e6' },
-  raking:  { name: 'Raking light', az: 250, el: 14, key: 3.2, env: 0.22, warm: '#ffe9cf' },
-  window:  { name: 'Window light', az: 300, el: 30, key: 2.4, env: 0.4, warm: '#fff8ef' },
-  gallery: { name: 'Gallery spot', az: 200, el: 58, key: 2.6, env: 0.16, warm: '#ffe6c4' },
-  dark:    { name: 'Lights down',  az: 220, el: 40, key: 0.35, env: 0.06, warm: '#9fb7ff' },
+  studio:   { name: 'Studio',        az: 220, el: 42, key: 2.0, env: 0.5,  warm: 0.2,  fill: 0.25, exp: 1.0 },
+  raking:   { name: 'Raking light',  az: 250, el: 14, key: 3.4, env: 0.42, warm: 0.3,  fill: 0.35, exp: 1.2 },
+  gallery:  { name: 'Gallery',       az: 200, el: 58, key: 2.6, env: 0.2,  warm: 0.3,  fill: 0.3,  exp: 1.0 },
+  overhead: { name: 'Overhead flat', az: 180, el: 85, key: 2.0, env: 0.55, warm: 0.0,  fill: 0.5,  exp: 1.0 },
+  dramatic: { name: 'Dramatic',      az: 245, el: 20, key: 3.8, env: 0.12, warm: 0.45, fill: 0.0,  exp: 0.95 },
+  window:   { name: 'Cool daylight', az: 300, el: 40, key: 2.2, env: 0.45, warm: -0.4, fill: 0.4,  exp: 1.0 },
+  dark:     { name: 'Lights down',   az: 220, el: 40, key: 0.35, env: 0.06, warm: -0.6, fill: 0.0, exp: 1.0 },
 };
