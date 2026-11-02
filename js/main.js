@@ -27,6 +27,7 @@ for (const el of $$('.slider')) {
     paint();
     const v = parseFloat(inp.value);
     if (el.dataset.scope === 'view') {
+      viewer.interact();                 // draft frames while dragging, full quality when it stops
       if (k === 'glow') viewer.setMaterial({ glow: v });
       else if (k === 'charScale') { viewer.uniforms.uCharScale.value = v; viewer.dirty = true; }
       else viewer.setLighting({ [k]: v });
@@ -82,7 +83,7 @@ $('#sanded').onchange = (e) => viewer.setMaterial({ sanded: e.target.checked });
 $('#lightPreset').innerHTML = Object.entries(LIGHTS).map(([k, l]) => `<option value="${k}">${l.name}</option>`).join('');
 $('#lightPreset').onchange = (e) => { viewer.setLighting({ light: e.target.value }); for (const k of ['az', 'el', 'key', 'env']) slider(k).set(viewer.state[k]); };
 seg('#backdrop', (v) => viewer.setLighting({ backdrop: v }));
-$('#meshRes').onchange = (e) => { viewer.state.meshRes = +e.target.value; if (viewer.depth) viewer.buildMeshes(); };
+$('#meshRes').onchange = (e) => viewer.setMeshRes(+e.target.value);
 $$('#views button').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
 
 // tabs
@@ -107,6 +108,7 @@ $('#fileIn').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
 
 async function loadFile(f, name = f.name) {
   setStatus('busy', 'Loading…');
+  if (!engine.cvReady) { busy(true, 'Loading the tracer…'); warm(); }
   try { onLoaded(await engine.load(f, name)); }
   catch (e) { console.error(e); setStatus('err', 'Could not read that file'); }
 }
@@ -158,10 +160,8 @@ async function run(trace) {
     if (my !== app.seq) { if (!trace) revoke(out.urls); else keepTraced(res); return; }   // a newer request superseded this one
     if (app.result && app.result !== app.traced && app.result !== res) revoke(app.result.urls);
     app.result = res; if (trace) keepTraced(res);
-    const buf = out.depth;
-    const u16 = new Uint16Array(buf), d = new Float32Array(u16.length), md = res.tex.max_depth;
-    for (let i = 0; i < u16.length; i++) d[i] = u16[i] / 65535 * md;
-    viewer.setDepth(d, res.tex.w, res.tex.h, res.size_mm[0], res.size_mm[1], md);
+    // the worker already packed the GPU texture; the viewer just uploads it (no mesh rebuild)
+    viewer.setDepth(new Uint16Array(out.depthRG), res.tex.w, res.tex.h, res.size_mm[0], res.size_mm[1], res.tex.max_depth);
     showStats(res); show2d();
     for (const id of ['#btnSvg', '#btnStats']) $(id).disabled = !trace;
     $('#btnPng').disabled = false;
@@ -174,6 +174,17 @@ async function run(trace) {
 function keepTraced(res) { if (app.traced && app.traced !== res && app.traced !== app.result) revoke(app.traced.urls); app.traced = res; }
 function setStatus(cls, text) { const s = $('#status'); s.className = 'status ' + cls; s.querySelector('span').textContent = text; }
 function busy(on, text) { $('#busy').classList.toggle('hidden', !on); if (text) $('#busyText').textContent = text; }
+
+// OpenCV (the tracer, ~3.5 MB compressed) is not part of the page load: it starts streaming once the page is idle,
+// or straight away when an image is picked, with a progress bar in the busy pill.
+let cvPct = -1;
+engine.onprogress = (loaded, total) => {
+  const pct = Math.min(100, Math.round(loaded / total * 100)); if (pct === cvPct) return; cvPct = pct;
+  const bar = $('#cvBar'); bar.classList.toggle('hidden', pct >= 100); bar.firstElementChild.style.width = pct + '%';
+  if (pct < 100 && !$('#busy').classList.contains('hidden')) $('#busyText').textContent = `Loading the tracer… ${pct}%`;
+};
+const warm = () => engine.warm().catch((e) => { console.error(e); setStatus('err', 'Could not load the tracer'); });
+(window.requestIdleCallback || ((f) => setTimeout(f, 1500)))(warm, { timeout: 2500 });
 
 function showStats(res) {
   const s = res.stats, e = s.estimate, f = res.flags, ap = res.traced ? '' : '≈';

@@ -2,15 +2,39 @@
  * A line-for-line port of the Python reference (server/engine.py + cnc_vector.py) so SVGs and stats line up.
  * OpenCV.js (same OpenCV 5.0 as the reference) does the image ops; potrace-core does the tracing.
  * Classic worker; all paths relative to this file so the app works from any folder or site root. */
-importScripts('../vendor/opencv.js', '../vendor/potrace-core.min.js');
+importScripts('../vendor/potrace-core.min.js');
 
-let cv = null;
-const ready = (async () => {
-  let c = self.cv;
-  if (c && typeof c.then === 'function') c = await c;
-  else if (c && !c.Mat) await new Promise((r) => { c.onRuntimeInitialized = r; });
-  cv = c;
-})();
+// OpenCV (12 MB of WebAssembly) loads on demand: the first image or a warm-up ping starts it.
+// The wasm is compiled while it streams in; download progress goes to the page for its progress bar.
+const CV_WASM_BYTES = 11958198;
+let cv = null, cvLoading = null;
+function loadCV() {
+  if (cvLoading) return cvLoading;
+  cvLoading = (async () => {
+    const url = new URL('../vendor/opencv.wasm', self.location.href).href;
+    const progress = (loaded) => self.postMessage({ type: 'cvprogress', loaded, total: CV_WASM_BYTES });
+    self.CV_WASM_MODULE = (async () => {
+      const res = await fetch(url);
+      if (!res.ok || !res.body) throw new Error('could not fetch opencv.wasm (' + res.status + ')');
+      const [a, b] = res.body.tee();
+      (async () => {
+        const rd = b.getReader(); let n = 0, last = 0;
+        for (;;) { const { done, value } = await rd.read(); if (done) break; n += value.length; const t = performance.now(); if (t - last > 100) { last = t; progress(n); } }
+        progress(CV_WASM_BYTES);
+      })();
+      try { return await WebAssembly.compileStreaming(new Response(a, { headers: { 'Content-Type': 'application/wasm' } })); }
+      catch (e) { return WebAssembly.compile(await (await fetch(url)).arrayBuffer()); }
+    })();
+    importScripts('../vendor/opencv.js');
+    let c = self.cv;
+    if (c && typeof c.then === 'function') c = await c;
+    else if (typeof c === 'function') c = await c();
+    else if (c && !c.Mat) await new Promise((r) => { c.onRuntimeInitialized = r; });
+    cv = c;
+    self.postMessage({ type: 'cvready' });
+  })();
+  return cvLoading;
+}
 
 // ------------------------------------------------------------------ python-compatible helpers
 function pyRound(x) {                       // round-half-even, like Python's round()
@@ -431,6 +455,42 @@ function depthTexture(safe, w, h, W, H, a, ds) {
   return { u16, tw, th };
 }
 
+// ------------------------------------------------------------------ 3D viewer texture
+// RG half floats for the GPU: r = depth / max depth, g = carve mask blurred ~0.45 mm (AO, lip scorch, resin wicking).
+// Done here so the page never blocks on it; the trace outputs above are untouched.
+function viewerTexture(u16, tw, th, artW) {
+  const n = tw * th, mask = new Float32Array(n), tmp = new Float32Array(n), md = 65535;
+  for (let i = 0; i < n; i++) mask[i] = u16[i] > 0 ? 1 : 0;
+  const rad = Math.max(1, Math.round(0.45 * tw / artW));
+  for (let pass = 0; pass < 3; pass++) { boxBlurH(mask, tmp, tw, th, rad); boxBlurV(tmp, mask, tw, th, rad); }
+  const out = new Uint16Array(n * 2);
+  for (let i = 0; i < n; i++) { out[2 * i] = toHalf(u16[i] / md); out[2 * i + 1] = toHalf(mask[i]); }
+  return out;
+}
+const _f32 = new Float32Array(1), _u32 = new Uint32Array(_f32.buffer);
+function toHalf(v) {                       // float -> IEEE half; values here are 0..1
+  if (!(v > 0)) return 0;
+  if (v < 6.103515625e-5) return Math.round(v / 5.960464477539063e-8);   // subnormal half
+  _f32[0] = v; const x = _u32[0], e = (x >>> 23) & 0xff, m = x & 0x7fffff;
+  return (((e - 112) << 10) | (m >>> 13)) + ((m >>> 12) & 1);
+}
+function boxBlurH(src, dst, w, h, r) {
+  const k = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const o = y * w; let acc = 0;
+    for (let x = -r; x <= r; x++) acc += src[o + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) { dst[o + x] = acc * k; acc += src[o + Math.min(w - 1, x + r + 1)] - src[o + Math.max(0, x - r)]; }
+  }
+}
+function boxBlurV(src, dst, w, h, r) {
+  const k = 1 / (2 * r + 1);
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += src[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) { dst[y * w + x] = acc * k; acc += src[Math.min(h - 1, y + r + 1) * w + x] - src[Math.max(0, y - r) * w + x]; }
+  }
+}
+
 // ------------------------------------------------------------------ process
 async function process(src, params, doTrace) {
   const t0 = performance.now(), tm = {}, lap = (k) => { tm[k] = r2((performance.now() - t0) / 1000, 2); };
@@ -474,8 +534,9 @@ async function process(src, params, doTrace) {
   const useSvgDepth = doTrace && (src.kind !== 'svg' || a.svg_retrace);
   const tex = depthTexture(safe, w, h, W, H, a, useSvgDepth ? depthDs : null); lap('depth');
   res.tex = { w: tex.tw, h: tex.th, max_depth: a.depth };
+  const rg = viewerTexture(tex.u16, tex.tw, tex.th, W); lap('viewer_tex');
   const ovl = overlayImage(w, h, layers); lap('overlay');
-  const blobs = { depth: tex.u16.buffer, overlay: await toPngBlob(ovl, 'rgba') }; lap('overlay_png');
+  const blobs = { depth: tex.u16.buffer, depthRG: rg.buffer, overlay: await toPngBlob(ovl, 'rgba') }; lap('overlay_png');
   blobs.mask = await toPngBlob(maskImage(safe, w, h), 'gray'); lap('mask_png');
   if (svgText) {
     blobs.svg = svgText;
@@ -493,7 +554,7 @@ async function process(src, params, doTrace) {
 self.onmessage = async (e) => {
   const m = e.data;
   try {
-    await ready;
+    await loadCV();
     if (m.type === 'load') {
       const info = await loadSource(m);
       self.postMessage({ rid: m.rid, ok: true, info });
@@ -501,7 +562,7 @@ self.onmessage = async (e) => {
       const src = sources.get(m.id);
       if (!src) throw new Error('source not loaded');
       const out = await process(src, m.params || {}, !!m.trace);
-      self.postMessage({ rid: m.rid, ok: true, ...out }, [out.blobs.depth]);
+      self.postMessage({ rid: m.rid, ok: true, ...out }, [out.blobs.depth, out.blobs.depthRG]);
     } else if (m.type === 'debugMask') {       // test hook: the masks the reference compares against
       const src = sources.get(m.id), a = makeArgs(m.params || {}), r = buildMask(src, a);
       self.postMessage({ rid: m.rid, ok: true, w: r.w, h: r.h, raw: r.raw, safe: r.safe, rgba: src.img ? src.img.data : null, sw: src.w, sh: src.h });

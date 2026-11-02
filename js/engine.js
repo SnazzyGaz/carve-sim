@@ -5,10 +5,19 @@ export class Engine {
     this.worker = new Worker(new URL('./carve-worker.js', import.meta.url));
     this.rid = 0; this.waiting = new Map();
     this.busy = false; this.queued = null;
-    this.worker.onmessage = (e) => { const p = this.waiting.get(e.data.rid); if (p) { this.waiting.delete(e.data.rid); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); } };
+    this.onprogress = null;                    // (loaded, total) while OpenCV downloads
+    this.worker.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'cvprogress') { this.onprogress?.(d.loaded, d.total); return; }
+      if (d.type === 'cvready') { this.cvReady = true; this.onprogress?.(1, 1); return; }
+      const p = this.waiting.get(d.rid); if (p) { this.waiting.delete(d.rid); d.ok ? p.res(d) : p.rej(new Error(d.error)); }
+    };
     this.worker.onerror = (e) => console.error('worker error', e.message || e);
-    this.ready = this._call({ type: 'ping' });   // resolves once OpenCV is up
+    this._ready = null; this.cvReady = false;
   }
+  // OpenCV is not loaded with the page; this starts it (idempotent) and resolves once it is up
+  get ready() { return this._ready ??= this._call({ type: 'ping' }); }
+  warm() { return this.ready; }
   _call(msg, transfer = []) {
     const rid = ++this.rid;
     return new Promise((res, rej) => { this.waiting.set(rid, { res, rej }); this.worker.postMessage({ ...msg, rid }, transfer); });
@@ -45,7 +54,7 @@ export class Engine {
       if (b.svg) urls.svg = URL.createObjectURL(new Blob([b.svg], { type: 'image/svg+xml' }));
       urls.stats = URL.createObjectURL(new Blob([b.stats], { type: 'application/json' }));
       r.res.key = 'r' + r.rid; r.res.wall_ms = Math.round(performance.now() - t0);
-      q.res({ res: r.res, depth: b.depth, svg: b.svg, urls });
+      q.res({ res: r.res, depth: b.depth, depthRG: b.depthRG, svg: b.svg, urls });
     } catch (e) { q.rej(e); }
     finally { this.busy = false; this._pump(); }
   }
