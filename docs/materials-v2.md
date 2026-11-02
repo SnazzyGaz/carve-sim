@@ -66,7 +66,7 @@ The Relief Forge 2.0.6/2.0.7 material work, ported to Carve Sim's GPU-displaced 
 - Moving the level, flood or meniscus control switches **Sanded flush** off. A sanded fill is the levelled, flush surface as before.
 
 **Camera like Relief Forge 2.0.7**
-- OrbitControls about a fixed world up (y): no roll, and the horizon stays level. Damping is 0.12, panning is screen-space, the polar angle is clamped to 0–85° (the camera never dips under the floor), and zoom-to-cursor is off as in Forge. Double-click still re-centres on the board.
+- OrbitControls about a fixed world up (y): no roll, and the horizon stays level. Damping is 0.12, panning is screen-space, the polar angle is clamped to 0–85° (the camera never dips under the floor), and zoom-to-cursor is off as in Forge. Double-click still re-centres on the board. Since the creative-director pass: pan keeps the orbit centre over the board, zoom-out stops at 2.5× the fit distance, presets ease over ~360 ms (instant from `app.set` and with reduced motion) and light up while active, and **Fit** / `F` / `Home` / double-clicking the backdrop frames the whole board.
 - **Sway** (Forge's turntable) turns the board slowly to and fro, ±0.38 rad about the vertical axis with Forge's 2.6 s time constant. The camera, lights, environment and floor stay put. The shaders work in board millimetres, so the camera position, key direction and normal rotation are passed in the board frame each frame (three uniforms). The shadow is redrawn every frame while it sways.
 - Draft quality during drags is unchanged.
 

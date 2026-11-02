@@ -33,6 +33,7 @@
         <img id="thumb" alt="">
         <div class="dropText"><b>Drop a finished SVG</b><span>From the CNC skill or any vector art. Click to browse, or paste (Ctrl+V).</span></div>
       </label>
+      <div class="traceLink">No SVG? <a href="#" id="openTrace">Trace a PNG or JPG</a> into one.</div>
       <div class="samples" id="samples"></div>
     </section>
     <section class="card">
@@ -76,10 +77,11 @@
         <button data-view="top" title="Top down">Top</button>
         <button data-view="angle" title="Three-quarter">Angle</button>
         <button data-view="low" title="Low, raking">Low</button>
-                <button data-view="corner" title="Corner detail">Corner</button>
+        <button data-view="corner" title="Corner detail">Corner</button>
         <button data-view="close" title="Close-up on the orbit centre (double-click the board to set it)">Close-up</button>
+        <button data-view="fit" class="fitbtn" title="Fit the whole board back in view (F or Home · double-click the backdrop)" aria-label="Fit board">⤢ Fit</button>
         <button class="swaybtn" id="sway" title="Turntable: the board sways slowly so the light plays across the carve">Sway</button>
-        <span class="ab" id="ab" title="Compare two looks: changes go to the active letter"><button data-v="A" class="on">A</button><button data-v="B">B</button></span>
+        <span class="ab" id="ab" title="Compare two looks: changes go to the active letter"><em>Compare</em><button data-v="A" class="on">A</button><button data-v="B">B</button></span>
       </div>
     </div>
     <div class="viewport" id="vp3d"><div class="empty" id="empty3d"><div><b>Drop a finished SVG</b><span>See it carved in the wood and fill you plan to use, before you cut.</span></div></div></div>
@@ -89,6 +91,11 @@
         <div class="imgwrap" id="imgwrap"><img id="img2d" alt=""></div>
       </div>
     </div>
+    <div class="stagemsg hidden" id="stageMsg" role="alert"><button class="x" id="smClose" aria-label="Dismiss">×</button><b id="smTitle"></b><span id="smText"></span>
+      <div class="smlinks"><a href="#" id="smSample">Try a sample</a><a href="#" id="smHelp">What SVGs work?</a></div>
+      <div class="smhelp hidden" id="smHelpText">Closed shapes with a fill carve as V-carve or pocket; strokes engrave. Layer ids such as <code>vcarve</code>, <code>pocket</code>, <code>engrave</code> and <code>profile_border</code> set the cut, and the CNC vector skill's files work as they are. Text must be converted to paths.</div></div>
+    <div class="gesture hidden" id="gesture"><span>Drag to turn · Scroll to zoom · Right-drag to pan · Double-click to focus · <b>F</b> to fit</span><button class="x" id="gestureX" aria-label="Dismiss">×</button></div>
+    <div class="toast hidden" id="toast" role="status"></div>
     <div class="busy hidden" id="busy"><div class="spin"></div><span id="busyText">Baking…</span><div class="bar hidden" id="cvBar"><i></i></div></div>
   </section>
 
@@ -99,6 +106,15 @@
       <div class="row"><label>Finish</label><div class="seg small inline" id="finish"></div></div>
     </section>
     <section class="card">
+      <h3>Light</h3>
+      <div class="seg" id="lightPreset"></div>
+      <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Direction" data-scope="view"></div>
+      <div class="slider" data-k="bright" data-min="0.5" data-max="1.6" data-step="0.01" data-v="1" data-pct="1" data-label="Brightness" data-scope="view"></div>
+      <div class="row"><label>Shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
+      <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
+      <div class="row"><label title="Fast suits older laptops and integrated graphics. Detail adapts to zoom either way">Detail</label><div class="seg small inline" id="meshRes"><button data-v="512">Fast</button><button data-v="1024" class="on">Fine</button><button data-v="2048">Max</button></div></div>
+    </section>
+    <section class="card">
       <h3>Fill</h3>
       <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Wood inlay</button></div>
       <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
@@ -107,22 +123,13 @@
           <label class="pick"><input type="color" id="customColor" value="#b5452c"><span id="customSw"></span></label>
           <div class="seg small inline" id="customType"><button data-v="0" class="on">Opaque</button><button data-v="1">Metallic</button><button data-v="2">Tinted</button></div>
         </div></div>
-      <div id="fillInlay" class="sub hidden"><div class="sublabel">Inlay species (fills the carve)</div><div class="chips wood" id="inserts"></div></div>
+      <div id="fillInlay" class="sub hidden"><div class="sublabel">Inlay species (fills the carve)</div><div class="chips wood" id="inserts"></div><div class="warn hidden" id="inlaySame">Same wood as the board, so the carve will barely show. Pick a contrasting inlay.</div></div>
       <div class="row" id="sandRow"><label title="Off shows the fill as poured or glued, before the face is sanded">Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
       <div id="pourCtl" class="sub hidden">
         <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat)"></div>
         <div class="row"><label title="Above flush the resin spreads over the board as a thin level coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
         <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the walls"></div>
       </div>
-    </section>
-    <section class="card">
-      <h3>Light</h3>
-      <div class="seg" id="lightPreset"></div>
-      <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Direction" data-scope="view"></div>
-      <div class="slider" data-k="bright" data-min="0.5" data-max="1.6" data-step="0.01" data-v="1" data-pct="1" data-label="Brightness" data-scope="view"></div>
-      <div class="row"><label>Shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
-      <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
-      <div class="row"><label title="Fast suits older laptops and integrated graphics. Detail adapts to zoom either way">Detail</label><div class="seg small inline" id="meshRes"><button data-v="512">Fast</button><button data-v="1024" class="on">Fine</button><button data-v="2048">Max</button></div></div>
     </section>
     <section class="card" id="cardJob">
       <h3>Job</h3>
