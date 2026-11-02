@@ -3,7 +3,13 @@
 // vBoard.y = height (0 = board top, negative = carved).
 // Shared by the vertex shader (GPU displacement of a static grid), the shadow depth pass and the fragment shader.
 export const COMMON = /* glsl */`
-uniform sampler2D uDepth;     // r = depth / maxDepth, g = blurred carve mask
+uniform sampler2D uDepth;     // exact SDF of the cut (from the SVG geometry): r = signed mm to the cut line (+ inside),
+                              // g = blurred carve mask, b = floor depth mm, a = wall slope (mm of depth per mm)
+uniform sampler2D uSteps;     // pocket terraces: signed mm to the outlines of levels 2..5, one per channel
+uniform vec4 uStepD;          // depth each terrace adds, mm (0 = unused)
+uniform float uStepK;         // terrace wall slope, 1/mm
+uniform vec2 uFK;             // the file's one floor depth / wall slope when uDepth is RG (y = 0: per texel in .ba)
+uniform float uGridStep;      // vertex grid step mm for the edge snap (0 on draft frames: no snap)
 uniform vec2 uArt;            // art size mm
 uniform float uMaxDepth;
 uniform int uPart;            // 0 board top, 1 board sides, 2 fill overpour mesh
@@ -11,7 +17,6 @@ uniform int uMode;            // 0 none, 1 epoxy, 2 inlay, 3 reverse inlay, 4 ch
 uniform bool uFlat;           // top drawn flat (flush fills)
 uniform float uOver;          // how proud the unsanded inlay plug stands, mm
 uniform vec2 uTexel;          // 1/texture size
-uniform float uEdge;          // depth iso-level of the cut line
 uniform float uFillLevel;     // as-poured epoxy level, mm against the board top (- under-filled, 0 flush, + overpour)
 uniform bool uFlood;          // overpour spreads over the board as a level flood coat (else pinned at the channel: <= flush)
 uniform float uMenisc;        // shrinkage dish + wall meniscus amount (0..1)
@@ -19,18 +24,75 @@ uniform sampler2D uDist;      // r = distance to the fill region's edge / DIST_M
 uniform vec4 uBoardRect;      // board top in board mm: x0, z0, width, height
 varying vec3 vBoard;
 const float DIST_MAX = 8.0;
-vec2 tex(vec2 uv){
-  if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return vec2(0.0);
-  return texture2D(uDepth, uv).rg;
+bool outArt(vec2 uv){ return uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0; }
+vec4 sdfT(vec2 uv){
+  if (outArt(uv)) return vec4(-1.0, 0.0, 0.0, 1.0);
+  vec4 t = texture2D(uDepth, uv);
+  if (uFK.y > 0.0) t.ba = uFK;
+  return t;
 }
-float depthAtC(vec2 uv){ return tex(uv).r * uMaxDepth; }
+vec4 stepsT(vec2 uv){ return outArt(uv) ? vec4(-8.0) : texture2D(uSteps, uv); }
+// depth from the SDF, per pixel / vertex: V walls at the bit's slope down to the floor (V-carve: depth = min(max, sdf /
+// tan(a/2))), pockets a near-vertical wall onto a flat floor, engraves the V of a centreline; plus pocket terraces
+float depthOf(vec4 t, vec2 uv){
+  float d = clamp(t.r * t.a, 0.0, t.b);
+  if (uStepD.x > 0.0) d += dot(uStepD, clamp(stepsT(uv) * uStepK, 0.0, 1.0));
+  return d;
+}
+vec2 tex(vec2 uv){ vec4 t = sdfT(uv); return vec2(depthOf(t, uv), t.g); }   // x = depth mm, y = blurred carve mask
+float depthAtC(vec2 uv){ return tex(uv).x; }
+vec2 gradS(vec2 uv){   // gradient of the cut SDF (unit length away from the medial axis)
+  vec2 e = uTexel;
+  return vec2(sdfT(uv + vec2(e.x, 0.0)).r - sdfT(uv - vec2(e.x, 0.0)).r, sdfT(uv + vec2(0.0, e.y)).r - sdfT(uv - vec2(0.0, e.y)).r) / (2.0 * e * uArt);
+}
+vec2 gradStep(vec2 uv, vec4 sel){
+  vec2 e = uTexel;
+  return vec2(dot(stepsT(uv + vec2(e.x, 0.0)) - stepsT(uv - vec2(e.x, 0.0)), sel), dot(stepsT(uv + vec2(0.0, e.y)) - stepsT(uv - vec2(0.0, e.y)), sel)) / (2.0 * e * uArt);
+}
+// Grid vertices near a contour (the lip s = 0 or the foot of the wall s = w) slide along the SDF gradient onto it, so the
+// displaced mesh has an edge exactly on the cut line instead of a stair-step at the grid spacing. Lip: from one grid step
+// outside to half a step inside; foot: half a step either side (a full step outside it for thin pocket walls).
+bool snapBand(float s, float w, float c, out float tgt){
+  // top and floor are flat, so pulling a vertex from either onto its contour cannot dent them: the bands reach far
+  // enough (1.5 grid steps) that every grid quad straddling a wall has both its rows on the wall's two contours
+  if (s > -1.5 * c && s < min(0.5 * w, 0.5 * c)) { tgt = 0.0; return true; }
+  if (s >= max(0.5 * w, w - 0.5 * c) && s < w + (w < 2.0 * c ? 1.5 * c : 0.5 * c)) { tgt = w; return true; }
+  return false;
+}
+vec2 snapEdge(vec2 p){
+  // the nearest contour wins (lip/foot of the main cut or of a terrace step), so stacked terrace walls do not fight
+  float c = uGridStep, tgt, best = 1e9, bt = 0.0; int which = -1;
+  if (c <= 0.0) return p;
+  vec4 t = sdfT(p / uArt);
+  if (snapBand(t.r, t.b / max(t.a, 1e-4), c, tgt)) { best = abs(t.r - tgt); bt = tgt; which = 4; }
+  vec4 q = vec4(-8.0);
+  if (uStepD.x > 0.0){
+    q = stepsT(p / uArt);
+    for (int i = 0; i < 4; i++){
+      if (uStepD[i] <= 0.0) break;
+      if (snapBand(q[i], 1.0 / uStepK, c, tgt) && abs(q[i] - tgt) < best) { best = abs(q[i] - tgt); bt = tgt; which = i; }
+    }
+  }
+  if (which < 0) return p;
+  vec4 sel = vec4(0.0); if (which < 4) sel[which] = 1.0;
+  float s = which == 4 ? t.r : dot(q, sel);
+  vec2 p0 = p;
+  for (int it = 0; it < 3; it++){
+    vec2 g = which == 4 ? gradS(p / uArt) : gradStep(p / uArt, sel);
+    float g2 = dot(g, g); if (g2 < 0.09) break;
+    p += g * ((bt - s) / g2);
+    s = which == 4 ? sdfT(p / uArt).r : dot(stepsT(p / uArt), sel);
+  }
+  // a vertex that cannot reach its contour within a grid step (corners, medial axis) stays put rather than spike
+  return (abs(s - bt) < 0.25 * c && length(p - p0) < 2.0 * c) ? p : p0;
+}
 // unsanded fill surface height (board mm, 0 = board top): epoxy overpour bulge with meniscus spill, or a proud inlay plug.
 // Points well under the board top drop below it, where the board hides them.
 varying float vHide;
 float fHide;   // set by fillH: 1 where there is no resin at this point (vertex hide flag)
 float fillH(vec2 p){
   vec2 uv = p / uArt;
-  vec2 t = tex(uv); float d = t.r * uMaxDepth, b = t.g;
+  vec4 tt = sdfT(uv); float d = depthOf(tt, uv);
   fHide = 0.0;
   if (uMode == 1){
     // as-poured epoxy at a set level, all against the baked depth (no rebake when the level moves):
@@ -49,8 +111,10 @@ float fillH(vec2 p){
     }
     float L = min(uFillLevel, 0.0);
     float res = d + L;                                             // resin thickness here
-    if (d < uEdge * 0.5 || res < -0.6) { fHide = 1.0; return min(-d, 0.0) - 0.6; }
-    float sl = max(length(vec2((depthAtC(uv + vec2(uTexel.x, 0.0)) - depthAtC(uv - vec2(uTexel.x, 0.0))) / (2.0 * uTexel.x * uArt.x),
+    if (tt.r <= 0.0 || res < -0.6) { fHide = 1.0; return min(-d, 0.0) - 0.6; }
+    // wall slope at the contact line: analytic from the SDF (slope K on the wall, flat on the floor); terraces fall back
+    // to finite differences of the depth
+    float sl = uStepD.x <= 0.0 ? (tt.r * tt.a < tt.b ? max(tt.a, 0.05) : 0.05) : max(length(vec2((depthAtC(uv + vec2(uTexel.x, 0.0)) - depthAtC(uv - vec2(uTexel.x, 0.0))) / (2.0 * uTexel.x * uArt.x),
                                (depthAtC(uv + vec2(0.0, uTexel.y)) - depthAtC(uv - vec2(0.0, uTexel.y))) / (2.0 * uTexel.y * uArt.y))), 0.05);
     float dc = max(res, 0.0) / sl;                                 // mm in from the contact line
     float men = uMenisc * 0.2 * exp(-dc / 0.4);
@@ -254,21 +318,44 @@ vec3 applyFinish(vec3 c){
   return max(c, vec3(0.0));
 }
 
-float depthAt(vec2 uv){
-  if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return 0.0;
-  return texture2D(uDepth, uv).r * uMaxDepth;
+float depthAt(vec2 uv){ return tex(uv).x; }
+// share of a pixel footprint fw (mm of SDF) that lies in [a, b]: box-filters the creases at the lip and the wall foot
+float bandIn(float s, float a, float b, float fw){ return clamp((min(s + 0.5*fw, b) - max(s - 0.5*fw, a)) / fw, 0.0, 1.0); }
+// surface normal of the carved top, analytic from the SDF: on a wall the depth gradient is slope * grad(sdf), elsewhere
+// flat (top, floors); the creases are box-filtered against the pixel so they stay crisp without crawling
+float sFw = 0.05;
+vec3 carveNormalT(vec2 uv, vec4 t){
+  float fw = max(sFw, 1e-4);
+  float band = bandIn(t.r, 0.0, t.b / max(t.a, 1e-4), fw);
+  vec2 g = vec2(0.0);
+  if (band > 0.0) g = gradS(uv) * (t.a * band);   // most of the board (top, floors) is flat: no gradient taps there
+  if (uStepD.x > 0.0){
+    vec2 e = uTexel; vec4 c = stepsT(uv), w = vec4(1.0 / uStepK);
+    vec4 on = uStepD * uStepK * vec4(bandIn(c.x, 0.0, w.x, fw), bandIn(c.y, 0.0, w.y, fw), bandIn(c.z, 0.0, w.z, fw), bandIn(c.w, 0.0, w.w, fw));
+    if (dot(on, on) > 0.0){
+      vec4 gx = (stepsT(uv + vec2(e.x, 0.0)) - stepsT(uv - vec2(e.x, 0.0))) / (2.0 * e.x * uArt.x);
+      vec4 gz = (stepsT(uv + vec2(0.0, e.y)) - stepsT(uv - vec2(0.0, e.y))) / (2.0 * e.y * uArt.y);
+      g += vec2(dot(gx, on), dot(gz, on));
+    }
+  }
+  return normalize(vec3(g.x, 1.0, g.y));   // height = -depth
 }
-// surface normal of the carved top from the depth map (world frame, y up)
-vec3 carveNormal(vec2 uv){
-  vec2 e = uTexel;
-  float hx = depthAt(uv+vec2(e.x,0.0)) - depthAt(uv-vec2(e.x,0.0));
-  float hz = depthAt(uv+vec2(0.0,e.y)) - depthAt(uv-vec2(0.0,e.y));
-  float dx = 2.0*e.x*uArt.x, dz = 2.0*e.y*uArt.y;
-  // height = -depth
-  return normalize(vec3(hx/dx, 1.0, hz/dz));
+vec3 carveNormal(vec2 uv){ return carveNormalT(uv, sdfT(uv)); }
+// A fragment on a steep triangle whose own SDF value falls just outside a wall band (the snapped mesh puts a near-vertical
+// pocket wall within a sliver of the contour, not exactly on it): shade it as the nearest wall rather than as flat top/floor.
+vec3 wallNormal(vec2 uv){
+  vec4 t = sdfT(uv); float w = t.b / max(t.a, 1e-4);
+  float best = abs(clamp(t.r, 0.0, w) - t.r); vec2 g = gradS(uv) * t.a;
+  if (uStepD.x > 0.0){
+    vec4 c = stepsT(uv); float ws = 1.0 / uStepK;
+    for (int i = 0; i < 4; i++){
+      if (uStepD[i] <= 0.0) break;
+      float dd = abs(clamp(c[i], 0.0, ws) - c[i]);
+      if (dd < best){ vec4 sel = vec4(0.0); sel[i] = 1.0; best = dd; g = gradStep(uv, sel) * (uStepD[i] * uStepK); }
+    }
+  }
+  return normalize(vec3(g.x, 1.0, g.y));
 }
-float hx_(vec2 uv){ float e = uTexel.x; return (depthAt(uv+vec2(e,0.0)) - depthAt(uv-vec2(e,0.0))) / (2.0*e*uArt.x); }
-float hz_(vec2 uv){ float e = uTexel.y; return (depthAt(uv+vec2(0.0,e)) - depthAt(uv-vec2(0.0,e))) / (2.0*e*uArt.y); }
 
 // voronoi char (alligatoring): returns crack line strength, cell random and cell-edge distance
 vec3 charCells(vec2 x){
@@ -366,7 +453,7 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
     if (uFillType == 3){
       col = mix(uFillColor, col, 0.25);
       float k = 1.0 - exp(-L*0.8);
-      sEmis = uGlowColor * uGlow * 0.35 * (0.2 + 0.8*k);
+      sEmis = uGlowColor * uGlow * 0.22 * (0.15 + 0.85*k);   // thin resin glows less (less pigment in the path)
     }
     sRough = 0.5;
   }
@@ -376,9 +463,11 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
 void surface(){
   vec3 P = vBoard;
   vec2 uv = P.xz / uArt;
-  vec2 tg = tex(uv);
-  float d = tg.r * uMaxDepth;
-  float g = tg.g;
+  vec4 tS = sdfT(uv);
+  float d = depthOf(tS, uv);
+  float g = tS.g;
+  float sd = tS.r;                                         // signed mm to the cut line, exact
+  sFw = max(fwidth(sd), 1e-4);
   vec3 Vw = normalize(P - uCamBoard);
   sMetal = 0.0; sCoat = uFinish.w; sCoatRough = uFinishCoatRough; sEmis = vec3(0.0); sAO = 1.0; sOverrideN = true; sSpec = 1.0;
   sN = vec3(0.0,1.0,0.0); sNc = vec3(0.0);
@@ -404,9 +493,12 @@ void surface(){
     sNc = sN;                                   // resin surface = the pour's meniscus
   }
 #else
-  float fwd = max(fwidth(d), 1e-4);
-  float cov = smoothstep(-fwd, fwd, d - uEdge);          // 1 inside the carve
-  vec3 nC = uFlat ? vec3(0.0,1.0,0.0) : carveNormal(uv);
+  float cov = clamp(sd / sFw + 0.5, 0.0, 1.0);             // 1 inside the carve: pixel coverage of the exact outline
+  vec3 nC = uFlat ? vec3(0.0,1.0,0.0) : carveNormalT(uv, tS);
+  if (!uFlat && nC.y > 0.9){
+    vec3 gN = normalize(cross(dFdx(P), dFdy(P)));
+    if (abs(gN.y) < 0.35) nC = wallNormal(uv);
+  }
   sN = nC;
   float yy = uFlat ? 0.0 : -d;
   vec3 Pw = vec3(P.x, yy, P.z);
@@ -459,8 +551,7 @@ void surface(){
   // box-filtered against the pixel so it stays a hairline at any zoom instead of a fat outline.
   vec4 B = bakeB(P.xz);
   vec3 ins = applyFinish(B.rgb * fibre(plugP(vec3(P.x, 0.0, P.z)), uMode==2 ? 1 : 0));
-  float slope = max(length(vec2(hx_(uv), hz_(uv))), 0.05);      // depth per mm across the wall at the line
-  float dist = (d - uEdge) / slope;                               // signed mm from the cut line (+ inside the plug)
+  float dist = sd;                                                // signed mm from the cut line (+ inside the plug)
   float px = length(vec2(length(dFdx(P.xz)), length(dFdy(P.xz)))) * 0.7071;
   float glue = lineCover(dist, 0.10, px) * 0.85;
   sAlb = mix(mix(woodTop, ins, cov), uGlueCol, glue);
@@ -476,7 +567,7 @@ uniform bool uBakeFlat;
 varying vec2 vUv;
 void bakeMain(){
   vec2 P = uBakeRect.xy + vUv * uBakeRect.zw;
-  float d = uBakeFlat ? 0.0 : tex(P / uArt).r * uMaxDepth;
+  float d = uBakeFlat ? 0.0 : tex(P / uArt).x;
   vec3 wp = vec3(P.x, -d, P.y); if (uBakeFlat) wp = plugP(wp);
   float r; vec3 c = wood(wp, uBakeK, r);
   gl_FragColor = vec4(c * 0.75, clamp(r, 0.0, 1.0));
@@ -492,7 +583,7 @@ export const BAKE_FRAG = () => '#define CARVE_BAKE\n#define CARVE_PART -1\n' + C
 
 // vertex: the grids are flat and built once; the carve is displaced here from the depth texture (GPU, no mesh rebuilds)
 export const VERT_MAIN = /* glsl */`
-if (uPart == 0 && !uFlat) transformed.y = -tex(transformed.xz / uArt).r * uMaxDepth;
+if (uPart == 0 && !uFlat){ transformed.xz = snapEdge(transformed.xz); transformed.y = -tex(transformed.xz / uArt).x; }
 vHide = 0.0;
 if (uPart == 2){ transformed.y = fillH(transformed.xz); vHide = fHide; }
 vBoard = transformed;

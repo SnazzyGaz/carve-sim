@@ -6,9 +6,14 @@ import { parseSvg, rasterFor, DEFAULT_WIDTH_MM } from './svg-import.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
-const settings = { carve: 'auto', vbit_angle: 60, depth: 3, pocket_depth: 6, engrave_depth: 1, width_mm: 300, margin: 18, thickness: 22 };
+// The carve comes from the SVG alone (it was made for its bit): layers, size and the skill's metadata (depth=, vbit_angle=,
+// mode=). Where the file says nothing, these fixed defaults are used and shown as such under Job. Only the board blank
+// (margin, thickness) is adjustable here, and that is cosmetic.
+const CARVE_DEFAULTS = { vbit_angle: 60, depth: 3, pocket_depth: 6, engrave_depth: 1 };
+const settings = { ...CARVE_DEFAULTS, width_mm: DEFAULT_WIDTH_MM, margin: 18, thickness: 22 };
+const carveSrc = {};   // key -> 'file' | 'default'
 const TEX_MAX = 2048, SS = 2;
-const app = { doc: null, job: null, traced: null, seq: 0, settings };
+const app = { doc: null, job: null, traced: null, seq: 0, settings, carveSrc };
 window.app = app;
 const qs = new URLSearchParams(location.search);
 
@@ -32,20 +37,18 @@ for (const el of $$('.slider')) {
       else if (k === 'fillLevel' || k === 'menisc') { const o = { [k]: v }; if (viewer.state.sanded) { o.sanded = false; $('#sanded').checked = false; } viewer.setMaterial(o); }
       else if (k === 'charScale') { viewer.uniforms.uCharScale.value = v; viewer.dirty = true; }
       else viewer.setLighting({ [k]: v });
-    } else if (k === 'vbit_angle') { settings.vbit_angle = v; syncChips(); }
+    }
+    el.dispatchEvent(new CustomEvent('slide', { detail: v }));
   });
-  // carve settings bake once, on release (no re-bake per drag step)
+  // the board blank rebuilds on release (cosmetic: no re-bake)
   inp.addEventListener('change', () => {
     const v = parseFloat(inp.value);
-    if (el.dataset.scope === 'bake') { settings[k] = v; requestBake(); }
-    else if (el.dataset.scope === 'board') { settings[k] = v; viewer.setBoard({ [k]: v }); }
+    if (el.dataset.scope === 'board') { settings[k] = v; viewer.setBoard({ [k]: v }); }
   });
   el.set = (v) => { inp.value = v; paint(); };
+  el.get = () => parseFloat(inp.value);
 }
 const slider = (k) => $(`.slider[data-k="${k}"]`);
-function syncChips() { for (const b of $$('#vbitChips button')) b.classList.toggle('on', +b.dataset.v === settings.vbit_angle); }
-$$('#vbitChips button').forEach((b) => b.onclick = () => { settings.vbit_angle = +b.dataset.v; slider('vbit_angle').set(settings.vbit_angle); syncChips(); requestBake(); });
-$('#carve').onchange = (e) => { settings.carve = e.target.value; carveUI(); requestBake(); };
 
 function seg(sel, cb) {
   $$(sel + ' button').forEach((b) => b.onclick = () => { $$(sel + ' button').forEach((x) => x.classList.toggle('on', x === b)); cb(b.dataset.v); });
@@ -148,17 +151,16 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   doc.t0 = t0; doc.parse_ms = Math.round(performance.now() - t0); doc.from = from;
   if (!doc.layers.some((l) => l.kind !== 'profile' && l.items.length) && !doc.generic) { setStatus('err', 'No carvable shapes in that SVG'); return; }
   app.doc = doc; app.job = null;
-  // the file decides the size; bit and depths carry over unless the file names them
-  const M = doc.meta;
-  settings.width_mm = Math.round((doc.width_mm || DEFAULT_WIDTH_MM) * 10) / 10;
-  if (M.vbit_angle) settings.vbit_angle = M.vbit_angle;
-  if (M.depth_mm) { if (doc.mode === 'pocket') settings.pocket_depth = M.depth_mm; else settings.depth = M.depth_mm; }
-  if (M.pocket_depth_mm) settings.pocket_depth = M.pocket_depth_mm;
-  if (M.engrave_depth_mm) settings.engrave_depth = M.engrave_depth_mm;
-  settings.carve = 'auto'; $('#carve').value = 'auto';
+  // everything about the carve comes from the file, else a fixed default (never a value left over from the last file)
+  const M = doc.meta, take = (k, v) => { settings[k] = v != null ? v : CARVE_DEFAULTS[k]; carveSrc[k] = v != null ? 'file' : 'default'; };
+  settings.width_mm = Math.round((doc.width_mm || DEFAULT_WIDTH_MM) * 10) / 10; carveSrc.width_mm = doc.width_mm ? 'file' : 'default';
+  take('vbit_angle', M.vbit_angle);
+  const dm = M.depth_mm;   // the skill's depth= is the cut depth of the file's mode
+  take('depth', ['pocket', 'engrave'].includes(doc.mode) ? null : dm);
+  take('pocket_depth', M.pocket_depth_mm ?? (doc.mode === 'pocket' ? dm : null));
+  take('engrave_depth', M.engrave_depth_mm ?? (doc.mode === 'engrave' ? dm : null));
   settings.margin = doc.hasProfile ? 0 : (settings.margin || 18);
-  for (const k of ['vbit_angle', 'depth', 'pocket_depth', 'engrave_depth', 'width_mm', 'margin']) slider(k).set(settings[k]);
-  syncChips(); carveUI();
+  slider('margin').set(settings.margin);
   viewer.state.margin = settings.margin; viewer.state.thickness = settings.thickness;   // applied by setDepth, no extra rebuild
   $('#fileName').textContent = `${name}  ·  ${settings.width_mm} × ${Math.round(settings.width_mm * doc.vb[3] / doc.vb[2] * 10) / 10} mm`;
   $('#empty3d').classList.add('hidden');
@@ -169,16 +171,9 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   }
   return requestBake();
 }
-function effKinds() {
+function effKinds() {   // generic art is cut as the file's mode (V-carve unless it says pocket)
   const d = app.doc; if (!d) return [];
-  return d.kinds.map((k) => k === 'region' || (settings.carve !== 'auto' && k !== 'engrave') ? (settings.carve !== 'auto' ? settings.carve : d.mode) : k);
-}
-function carveUI() {
-  const K = effKinds(), has = (...k) => !app.doc || k.some((x) => K.includes(x));
-  slider('vbit_angle').classList.toggle('hidden', !has('vcarve', 'engrave')); $('#vbitChips').classList.toggle('hidden', !has('vcarve', 'engrave'));
-  slider('depth').classList.toggle('hidden', !has('vcarve'));
-  slider('pocket_depth').classList.toggle('hidden', !has('pocket', 'level'));
-  slider('engrave_depth').classList.toggle('hidden', !(app.doc && K.includes('engrave')));
+  return [...new Set(d.kinds.map((k) => k === 'region' ? (d.mode === 'pocket' ? 'pocket' : 'vcarve') : k))];
 }
 
 // ---------------------------------------------------------------- bake (svg-worker.js)
@@ -212,7 +207,8 @@ async function bake() {
     if (my !== app.seq || doc !== app.doc) return;
     const tw0 = performance.now();
     const prevW = viewer.depth && viewer.depth.artW;
-    viewer.setDepth(new Uint16Array(r.depthRG), r.tw, r.th, r.W, r.H, r.md, new Uint8Array(r.ao));
+    viewer.setDepth(new Uint16Array(r.depthTex), r.tw, r.th, r.W, r.H, r.md, new Uint8Array(r.ao),
+      r.steps ? { ...r.steps, data: new Uint16Array(r.steps.data) } : null, r.fk);
     if (prevW && Math.abs(prevW - r.W) > 0.01 * r.W) viewer.setView('angle');   // new size: frame the whole board again
     const job = { name: doc.name, stats: r.stats, bake_ms: Math.round(tw0 - tb), worker_ms: r.stats.timing_ms, parse_ms: doc.parse_ms, raster_ms: doc.raster_ms || 0,
       settings: { ...settings }, kinds: effKinds(), layers: doc.layers.map((l) => ({ name: l.name, kind: l.kind, shapes: l.items.length })) };
@@ -244,15 +240,20 @@ const KIND = { vcarve: 'V-carve', pocket: 'pocket', level: 'pocket level', engra
 function showStats(job, doc) {
   const s = job.stats, cell = (k, v, u = '', wide = false) => `<div class="stat${wide ? ' wide' : ''}"><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div></div>`;
   const lay = doc.generic ? `drawn by the browser · cut as ${KIND[job.kinds[0]] || job.kinds[0]}` : doc.layers.map((l) => `${l.name} <small>(${KIND[l.kind] || l.kind}, ${l.items.length})</small>`).join('<br>');
-  const notes = [];
-  if (!doc.width_mm) notes.push(`No physical units in the file (width="${doc.vb[2]}"), so it is sized to ${DEFAULT_WIDTH_MM} mm wide. Change it under Finished width.`);
-  else notes.push(`Size from the file: ${doc.sizeFrom}.`);
+  const notes = [], K = job.kinds, st = job.settings, src = (k) => carveSrc[k] === 'file' ? '<small>(from file)</small>' : '<small class="dflt">(default, not in file)</small>';
+  const carve = [];
+  carve.push(`${s.size_mm[0]} × ${s.size_mm[1]} mm ${carveSrc.width_mm === 'file' ? `<small>(from file: ${doc.sizeFrom})</small>` : `<small class="dflt">(default ${DEFAULT_WIDTH_MM} mm wide: no physical units in the file)</small>`}`);
+  if (K.includes('vcarve') || K.includes('engrave')) carve.push(`${st.vbit_angle}° V-bit ${src('vbit_angle')}`);
+  if (K.includes('vcarve')) carve.push(`V-carve max depth ${st.depth} mm ${src('depth')}`);
+  if (K.includes('pocket') || K.includes('level')) carve.push(`Pocket depth ${st.pocket_depth} mm ${src('pocket_depth')}${K.includes('level') ? `, ${doc.layers.filter((l) => l.kind === 'level').length} levels` : ''}`);
+  if (K.includes('engrave')) carve.push(`Engrave depth ${st.engrave_depth} mm ${src('engrave_depth')}`);
   if (doc.hasProfile) notes.push('profile_border layer: the board is cut out on that line, so the margin starts at 0.');
   if (doc.meta.comment) notes.push(`Skill metadata: ${doc.meta.comment.replace(/^CNC vector \|\s*/i, '')}`);
   $('#stats').innerHTML = [
     cell('Finished size', `${s.size_mm[0]} × ${s.size_mm[1]}`, 'mm', true),
     cell('Deepest cut', s.max_depth_mm, 'mm'), cell('Cut area', s.cut_pct, '%'),
     cell('Shapes', doc.nShapes), cell(job.from_import ? 'Import → 3D' : 'Re-bake', job.first_frame_ms, 'ms'),
+    `<div class="stat wide"><div class="k">Carve, as read from the SVG</div><div class="v ro" style="font-size:12.5px;line-height:1.55">${carve.join('<br>')}</div></div>`,
     `<div class="stat wide"><div class="k">Layers</div><div class="v" style="font-size:12.5px;line-height:1.5">${lay}</div></div>`,
     `<div class="note">${notes.join('<br>')}</div>`,
   ].join('');
@@ -281,7 +282,7 @@ app.loadSvgText = (t, n) => loadSvgText(t, n).then(() => app.ready());
 let tracePanel = null;
 function openTrace() {
   const box = $('#traceBox'); if (!box.open) box.open = true;
-  return tracePanel ??= import('./trace-panel.js').then((m) => m.initTrace({ $, $$, seg, settings, setStatus,
+  return tracePanel ??= import('./trace-panel.js').then((m) => m.initTrace({ $, $$, seg, slider, setStatus,
     onSvg: (svg, name) => loadSvgText(svg, name, 'trace') }));
 }
 $('#traceBox').addEventListener('toggle', () => { if ($('#traceBox').open) openTrace(); });
@@ -308,7 +309,8 @@ app.set = (o) => {
   if (o.view) viewer.setView(o.view);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };
-app.setBake = (o) => { Object.assign(settings, o); for (const k in o) { const s = slider(k); if (s) s.set(o[k]); } if (o.carve) $('#carve').value = o.carve; carveUI(); if ('margin' in o || 'thickness' in o) viewer.setBoard(o); return requestBake(); };
+// test hook only (perf probes): re-bake the current file with other carve values; there is no UI for this on purpose
+app.setBake = (o) => { Object.assign(settings, o); for (const k in o) if (k in carveSrc) carveSrc[k] = 'test'; if ('margin' in o || 'thickness' in o) viewer.setBoard(o); return requestBake(); };
 fillUI('none');
 
 // offline: a small service worker caches the app shell (and the tracer once it has been used); ?nosw skips it

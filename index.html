@@ -39,17 +39,10 @@
       <div class="samples" id="samples"></div>
     </section>
     <section>
-      <h3>Carve settings</h3>
-      <div class="row"><label>Carve type</label><select id="carve"><option value="auto">From the file</option><option value="vcarve">V-carve</option><option value="pocket">Pocket (flat)</option></select></div>
-      <div class="slider" data-k="vbit_angle" data-min="20" data-max="150" data-step="1" data-v="60" data-u="°" data-label="V-bit angle" data-scope="bake"></div>
-      <div class="chips mini" id="vbitChips"><button data-v="30">30°</button><button data-v="60" class="on">60°</button><button data-v="90">90°</button><button data-v="120">120°</button></div>
-      <div class="slider" data-k="depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="V-carve max depth" data-scope="bake"></div>
-      <div class="slider" data-k="pocket_depth" data-min="0.5" data-max="20" data-step="0.1" data-v="6" data-u="mm" data-label="Pocket depth" data-scope="bake"></div>
-      <div class="slider" data-k="engrave_depth" data-min="0.2" data-max="5" data-step="0.1" data-v="1" data-u="mm" data-label="Engrave depth" data-scope="bake"></div>
-      <div class="slider" data-k="width_mm" data-min="30" data-max="1200" data-step="1" data-v="300" data-u="mm" data-label="Finished width" data-scope="bake"></div>
+      <h3>Board blank</h3>
       <div class="slider" data-k="margin" data-min="0" data-max="80" data-step="1" data-v="18" data-u="mm" data-label="Board margin" data-scope="board"></div>
       <div class="slider" data-k="thickness" data-min="6" data-max="60" data-step="1" data-v="22" data-u="mm" data-label="Board thickness" data-scope="board"></div>
-      <div class="hint">Each change bakes once, when you let go of the slider.</div>
+      <div class="hint">The carve itself (layers, size, bit, depths) comes from the SVG: it was made for its bit, so the showroom only shows the look. What was read is listed under Job.</div>
     </section>
     <section>
       <details id="traceBox">
@@ -63,6 +56,12 @@
         <div class="row"><label>Image type</label><select id="tPreset"><option value="line">Clean line art</option><option value="bold">Bold stencil</option><option value="photo">Photo / shaded</option><option value="fine">Fine detail</option></select></div>
         <div class="row"><label>Cut as</label><div class="seg small inline" id="tMode"><button data-v="vcarve" class="on">V-carve</button><button data-v="pocket">Pocket</button></div></div>
         <div class="row"><label>Invert (cut the light)</label><input type="checkbox" class="tog" id="tInvert"></div>
+        <div class="slider" data-k="t_vbit" data-min="20" data-max="150" data-step="1" data-v="60" data-u="°" data-label="V-bit angle" data-scope="trace"></div>
+        <div class="chips mini" id="tVbitChips"><button data-v="30">30°</button><button data-v="60" class="on">60°</button><button data-v="90">90°</button><button data-v="120">120°</button></div>
+        <div class="slider" data-k="t_depth" data-min="0.5" data-max="12" data-step="0.1" data-v="3" data-u="mm" data-label="V-carve max depth" data-scope="trace"></div>
+        <div class="slider hidden" data-k="t_pocket" data-min="0.5" data-max="20" data-step="0.1" data-v="6" data-u="mm" data-label="Pocket depth" data-scope="trace"></div>
+        <div class="slider" data-k="t_width" data-min="30" data-max="1200" data-step="1" data-v="300" data-u="mm" data-label="Finished width" data-scope="trace"></div>
+        <div class="hint">Used once, when you press Trace, and written into the SVG (size and the skill's metadata line), so the showroom and the downloaded file carry them.</div>
         <button class="btn block primary" id="btnTrace" disabled>Trace</button>
         <div class="bar hidden" id="tBar"><i></i></div>
         <div class="hint" id="tStatus"></div>

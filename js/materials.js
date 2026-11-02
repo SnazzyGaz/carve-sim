@@ -54,5 +54,5 @@ export const LIGHTS = {
   overhead: { name: 'Overhead flat', az: 180, el: 85, key: 2.0, env: 0.55, warm: 0.0,  fill: 0.5,  exp: 1.0 },
   dramatic: { name: 'Dramatic',      az: 245, el: 20, key: 3.8, env: 0.12, warm: 0.45, fill: 0.0,  exp: 0.95 },
   window:   { name: 'Cool daylight', az: 300, el: 40, key: 2.2, env: 0.45, warm: -0.4, fill: 0.4,  exp: 1.0 },
-  dark:     { name: 'Lights down',   az: 220, el: 40, key: 0.35, env: 0.06, warm: -0.6, fill: 0.0, exp: 1.0 },
+  dark:     { name: 'Lights down',   az: 220, el: 40, key: 0.7, env: 0.15, warm: -0.5, fill: 0.1, exp: 1.0 },
 };
