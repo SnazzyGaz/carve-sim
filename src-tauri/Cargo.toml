@@ -1,6 +1,6 @@
 [package]
 name = "carve-sim"
-version = "0.1.0"
+version = "0.1.1"
 description = "Carve Sim: B/W art to CNC-ready SVG with a 3D wood, inlay and epoxy preview"
 authors = ["Gaz"]
 license = "GPL-2.0-or-later"

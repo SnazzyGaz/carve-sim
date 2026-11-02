@@ -1,6 +1,6 @@
 {
   "name": "carve-sim",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Carve Sim: B/W art to CNC-ready SVG with bit-rule checks and a 3D wood/inlay/epoxy preview. Static web app, runs fully in the browser.",
   "license": "GPL-2.0-or-later",
