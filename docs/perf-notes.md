@@ -232,7 +232,7 @@ Same box and tools, run one after the other (base = 72f3f09, two runs; after = t
 | GPU texture memory | 301.4 MB | 301.4 MB (single-layer files use RG + uniform floor/slope; multi-level pockets add ~17 MB of step textures) |
 | warm import → first frame | fisherman 1.96, eagle 1.40, wolf 1.23, stag 1.41, logo 0.40 s | 2.13, 1.20, 2.04, 1.20, 0.76 s |
 
-The exact segment-distance SDF costs ~0.35–0.45 s per layer in the worker at 2048² (fisherman: 59,672 segments); the wolf pays it per pocket level. Fragment cost rises from the analytic normals plus the 3-step Newton edge snap; draft frames skip the snap. The overpour/pour path is the biggest gap. A bisect ruled out the snap, the wall fallback, texture bandwidth and the fill-hide threshold, so the cause is still open. Re-check on a real GPU before tuning.
+The exact segment-distance SDF costs ~0.35–0.45 s per layer in the worker at 2048² (fisherman: 59,672 segments); the old 3-level wolf pocket sample paid it per pocket level. Fragment cost rises from the analytic normals plus the 3-step Newton edge snap; draft frames skip the snap. The overpour/pour path is the biggest gap. A bisect ruled out the snap, the wall fallback, texture bandwidth and the fill-hide threshold, so the cause is still open. Re-check on a real GPU before tuning.
 
 ## Showroom tidy-up (panel and look pass)
 
@@ -240,3 +240,5 @@ The exact segment-distance SDF costs ~0.35–0.45 s per layer in the worker at 2
 - Sway now runs on draft frames (draft grid + adaptive pixel ratio), like an orbit. Before, it redrew the full-detail grid and the 4096 shadow map at full pixel ratio every frame.
 - The wood-bake cache budget is ~150 MB of GPU memory (was ~280 MB): two or three finished 4K bakes stay cached, which is what switching back and forth between species needs, and is kinder to integrated GPUs.
 - Finishes are Raw and Oiled only. Light presets are Studio, Raking, Overhead and Daylight; each sets the whole rig (height, strength, warmth, fill, ambient, exposure, occlusion), and the panel exposes only Direction and Brightness on top.
+
+> Note (samples): the wolf (3-level pocket) and stag (engrave lines) samples measured above were removed later and replaced by `samples/regal-stag.svg` (V-carve, 300 mm, 326 paths, made with the photo → woodcut B/W → `cnc_vector.py` pipeline). The wolf/stag figures are kept as historical measurements.

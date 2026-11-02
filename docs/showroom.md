@@ -54,7 +54,7 @@ Every dependency is self-hosted in `app/vendor` (three-lite, opencv.js and openc
 - Code is network-first, so updates show up straight away when you are online. vendor/ and samples/ are cache-first.
 - Add `?nosw` to bypass the service worker.
 
-To test it, load the page, open the tracer once, set the context offline and reload. The page, all four samples and a full trace still work (tested with Playwright and `context.set_offline(true)`).
+To test it, load the page, open the tracer once, set the context offline and reload. The page, all three samples (old fisherman, bald eagle, regal stag) and a full trace still work (tested with Playwright and `context.set_offline(true)`).
 
 ## Exports
 
