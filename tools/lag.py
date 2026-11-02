@@ -88,6 +88,22 @@ async def main():
                          ('nobloom_settled_frame', "app.viewer.requestRender(true)")]:
             async def f(js=js): await pg.evaluate(js)
             R['switch'][name] = await measure(f); save('switch')
+        # as-poured epoxy (materials v2 look pass): level / meniscus are uniforms, flood swaps the pour grid; absent in old builds
+        has = await pg.evaluate("!!document.querySelector('.slider[data-k=fillLevel]')")
+        if has:
+            R['pour'] = {}
+            async def f(): await pg.evaluate("app.set({material:{fill:'epoxy', fillPreset:'clear', sanded:false, fillLevel:0, flood:false}})")
+            R['pour']['pour_first'] = await measure(f); save('pour')
+            R['pour']['level_slider'] = await measure(await drag_slider('fillLevel', [-0.2 - 0.12 * i for i in range(6)])); save('pour')
+            R['pour']['menisc_slider'] = await measure(await drag_slider('menisc', [0.4 + 0.1 * i for i in range(6)])); save('pour')
+            async def f(): await pg.evaluate("app.set({material:{flood:true, fillLevel:0.8}})")
+            R['pour']['flood_on'] = await measure(f); save('pour')
+            R['pour']['level_slider_flood'] = await measure(await drag_slider('fillLevel', [0.5 + 0.1 * i for i in range(6)])); save('pour')
+        if await pg.evaluate("typeof app.viewer.setSway === 'function'"):
+            # Sway turntable: board turns about y with a shadow redraw per frame; mean frame gap over 3 s at full quality
+            R['sway_frame_ms'] = await pg.evaluate("""new Promise((res) => { const v = app.viewer, r0 = v.render.bind(v); let n = 0, t0 = 0;
+              v.render = () => { r0(); n++; if (!t0) t0 = performance.now(); }; v.setSway(true);
+              setTimeout(() => { v.setSway(false); v.render = r0; res(n > 1 ? (performance.now() - t0) / (n - 1) : null); }, 3000); })"""); save('sway_frame_ms')
         R['errors'] = [l for l in logs if 'error' in l.lower()][:8]
         await b.close()
     print(json.dumps(R, indent=1))

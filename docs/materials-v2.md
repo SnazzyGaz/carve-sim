@@ -11,9 +11,9 @@ The Relief Forge 2.0.6/2.0.7 material work, ported to Carve Sim's GPU-displaced 
 
 **Lighting and rendering**
 - Studio PMREM environment: a warm key softbox, a cool strip and a front fill over a dark floor. It's rebuilt only when the light's azimuth or elevation changes, and never during a drag; the rebuild is deferred to the settled frame. RoomEnvironment is gone (vendor build is 7.9 KB smaller).
-- AgX tone mapping with a mild saturation and contrast curve. Highlights roll off instead of clipping.
+- Tone mapping with highlight roll-off (first AgX, now PBR Neutral + Forge's S-curve; see the look pass below).
 - Soft PCF shadows (radius 3). The hemisphere light is removed; the environment does the ambient light.
-- Baked ambient occlusion: the trace worker computes a multi-scale cavity term (0.4 / 1.2 / 3.6 mm) and sends it as an R8 texture. It darkens only indirect light and specular, with specular occlusion. There's a new **Ambient occlusion** slider (default 0.6).
+- Baked ambient occlusion: the trace worker computes a multi-scale cavity term (0.4 / 1.2 / 3.6 mm) and sends it as an R8 texture. It darkens only indirect light and specular, with specular occlusion. There's a new **Ambient occlusion** slider (now default 25%, as in Forge).
 
 **Fills**
 - Clear and tinted epoxy: the resin top is a real clear coat (flat normal), with Beer–Lambert absorption along the refracted view path down to the wetted floor of the pocket. The floor is lit by the key light through the resin plus occluded ambient. An unsanded overpour is frosted (coat roughness 0.38).
@@ -36,6 +36,39 @@ The Relief Forge 2.0.6/2.0.7 material work, ported to Carve Sim's GPU-displaced 
 **Tools**
 - `tools/lag.py`: per-source lag probe (slider drags, orbit, species, finish and fill switches, bloom). It counts shadow redraws, in-frame bakes and bake strips.
 - `tools/perf_table.py`: turns perf.py and lag.py JSON into the markdown table.
+
+## Look pass, Forge lighting, pour controls, Forge camera (second commit)
+
+**Colour and tone**
+- The first cut looked washed out: AgX greys and darkens pale woods (maple read beige-grey, about 1.5 stops under its swatch) and turns gold highlights white. The tone map is now Khronos PBR Neutral, which reproduces base colours up to ~0.8 nearly 1:1, followed by Relief Forge 2.0.7's gentle S-curve (30%) and 1.08 saturation, so it isn't flat. The studio preset is calibrated (`EXPOSURE_CAL`) so a maple top under the key lands on its swatch. `?tm=punchy` still gives the AgX Punchy look for comparison, and `?cal=` overrides the calibration.
+- Under a finish film, the wood's own specular is cut to 30% at full coat (the finish and cell walls have nearly the same index), so the gloss comes from the film's top. That removes the milky veil on walnut.
+- The studio softbox is smaller and dimmer (4.5 × 3.5 at 44, radiance 7; it was 16 × 12 at 16), and the horizon band (0.2) lights the board's edges and sides in low views.
+- Gloss highlights: the key's glint on a near-mirror coat used to become a big soft disc in close-ups, because GGX's long tail was pushed through exposure and the S-curve. The coat's direct specular now has its tail squashed (x²/(x+k), with k larger for satin so the sheen stays a sheen) and its core capped. Gloss coat roughness is 0.03 (was 0.05, min 0.02), so clear epoxy shows a small, crisp glint and marble a soft sheen instead of a wash.
+- Metals: only the brightest channel's overshoot is compressed (hue kept) before the tone map, so a gold highlight stays gold instead of washing to white.
+- Metals have coloured F0: gold #ffc356, bronze #d9a066, brass #efcf78, copper #f0a07a, gunmetal #7d8186.
+- Opaque black is near black (#0c0c0d) with a subtle sheen. Amber absorbs 0.035 / 0.12 / 0.42 per mm with an #7a4a10 in-scatter, so it reads as honey, not orange-red.
+
+**Lighting like Relief Forge 2.0.7**
+- Light panel: Preset, Light direction, Light height, Key strength (0–8), Warmth (−1 cool daylight #bcd4ff … +1 tungsten #ffcf9a, as in Forge), Fill (Forge's cool #c8d8ff directional fill opposite the key, no shadow), Ambient (studio environment), Exposure, Ambient occlusion (**default 25%**), Cast shadows, Backdrop.
+- Presets follow Forge's: Studio, Raking light, Gallery, Overhead flat, Dramatic, Cool daylight, plus Lights down for glow fills. The raking preset has enough fill (0.35) that the hero shot's board edges show their end and side grain.
+- PMREM studio environment follows the key. Soft PCF shadows. The shadow map is still redrawn only when the key's direction moves, shadows are toggled, or the geometry changes (pour shape); never for strength, warmth, fill, ambient, exposure or AO.
+
+**As-poured epoxy (unsanded epoxy fills)**
+- **Pour level** slider, −2 … +1.5 mm against the board top: under-filled, flush, or overpour. It's a uniform: the pour surface is displaced in the vertex shader from the baked depth, with no rebake.
+  - **Pinned** (default): the level can't rise above the board top inside the carve outline (moving past 0 stays flush).
+  - **Flood coat** toggle: above flush, the resin is one level coat over the whole board top, eased off at the board edge.
+  - Under-filled clear and tinted resin shows the channel walls above it as wood. Below the level, the refracted view ray reaches the walls and floor through the resin with depth-based Beer–Lambert absorption.
+- **Shrinkage & meniscus** slider (0–100%, default 30%), for all epoxy types:
+  - Curing shrinkage dishes the middle of each pour (up to 4% of the resin's thickness), following a distance-to-edge field. That field is a two-pass chamfer distance transform of the carve mask at 512 px or less, computed once per depth map and only when an as-poured epoxy is shown (a few ms).
+  - A flood coat telegraphs faint dips over the channels.
+  - A meniscus (up to 0.2 mm) climbs the channel walls. It's measured from the contact line using the local wall slope, so it's exact below a texel.
+  - Each pixel drops resin that isn't there, so the contact line stays crisp.
+- Moving the level, flood or meniscus control switches **Sanded flush** off. A sanded fill is the levelled, flush surface as before.
+
+**Camera like Relief Forge 2.0.7**
+- OrbitControls about a fixed world up (y): no roll, and the horizon stays level. Damping is 0.12, panning is screen-space, the polar angle is clamped to 0–85° (the camera never dips under the floor), and zoom-to-cursor is off as in Forge. Double-click still re-centres on the board.
+- **Sway** (Forge's turntable) turns the board slowly to and fro, ±0.38 rad about the vertical axis with Forge's 2.6 s time constant. The camera, lights, environment and floor stay put. The shaders work in board millimetres, so the camera position, key direction and normal rotation are passed in the board frame each frame (three uniforms). The shadow is redrawn every frame while it sways.
+- Draft quality during drags is unchanged.
 
 ## Toward the SVG showroom (not built)
 

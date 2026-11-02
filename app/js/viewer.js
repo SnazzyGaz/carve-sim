@@ -8,17 +8,52 @@ import { COMMON, PARS, VERT_MAIN, BAKE_VERT, BAKE_FRAG } from './shader.js';
 import { SPECIES, FINISHES, FILLS, LIGHTS } from './materials.js';
 
 const lin = (hex) => new THREE.Color(hex); // ColorManagement: hex is sRGB -> stored linear
-const SETTLE_MS = 160;                     // full-quality frame this long after the last movement
+const SETTLE_MS = 160;
+// studio environment panels: [width, height, sRGB colour, radiance multiplier]; upward irradiance per unit env
+// intensity is about ENV.irr (key ~0.55, front ~0.35, the rest ~0.1); the resin floor model uses it
+const ENV = { room: '#1b1917', key: [4.5, 3.5, '#fff0dc', 7], strip: [2.5, 22, '#dde6ff', 1.4], front: [60, 40, '#fff4e8', 0.26], band: ['#ffeedd', 0.2], irr: 0.75 };                     // full-quality frame this long after the last movement
 
-// Tone mapping: AgX (keeps wood browns brown where ACES pushes them orange, and rolls highlights off without the
-// grey cast of Neutral), with a little saturation back and a gentle S-curve; the Relief Forge 2.0.7 look.
-THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }',
+// Tone mapping. Default ("studio"): Khronos PBR Neutral, which reproduces base colours up to ~0.8 nearly 1:1 (species-true
+// wood, coloured metal F0) and only rolls off true highlights, followed by Relief Forge 2.0.7's gentle S-curve and a touch of
+// saturation for contrast (so it is not flat). EXPOSURE_CAL calibrates the studio preset so a maple top under the key lands
+// on its swatch. AgX (Forge's base) was tried: it greys and darkens pale woods and turns gold highlights white.
+// Dev overrides for look calibration: ?tm=studio|punchy (AgX Punchy look) &cal=<exposure calibration>
+// float -> IEEE half bits (positive values only; for comparing against the RG half-float depth texture)
+function toHalf(v) { const f = new Float32Array([v]), u = new Uint32Array(f.buffer)[0], e = ((u >> 23) & 0xff) - 127 + 15;
+  if (e <= 0) return 0; if (e >= 31) return 0x7c00; return (e << 10) | ((u >> 13) & 0x3ff); }
+const DEV = new URLSearchParams(location.search);
+const TM = DEV.get('tm') || 'studio';
+const EXPOSURE_CAL = +(DEV.get('cal') || 1.6);
+if (TM === 'punchy') {
+  THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }',
   `vec3 CustomToneMapping( vec3 color ) {
-    vec3 c = AgXToneMapping( color );
+    const mat3 AgXInsetMatrix = mat3( vec3( 0.856627153315983, 0.137318972929847, 0.11189821299995 ),
+      vec3( 0.0951212405381588, 0.761241990602591, 0.0767994186031903 ), vec3( 0.0482516061458583, 0.101439036467562, 0.811302368396859 ) );
+    const mat3 AgXOutsetMatrix = mat3( vec3( 1.1271005818144368, - 0.1413297634984383, - 0.14132976349843826 ),
+      vec3( - 0.11060664309660323, 1.157823702216272, - 0.11060664309660294 ), vec3( - 0.016493938717834573, - 0.016493938717834257, 1.2519364065950405 ) );
+    const float AgxMinEv = - 12.47393; const float AgxMaxEv = 4.026069;
+    color *= toneMappingExposure;
+    color = LINEAR_SRGB_TO_LINEAR_REC2020 * color;
+    color = AgXInsetMatrix * color;
+    color = max( color, 1e-10 ); color = log2( color );
+    color = clamp( ( color - AgxMinEv ) / ( AgxMaxEv - AgxMinEv ), 0.0, 1.0 );
+    color = agxDefaultContrastApprox( color );
+    color = pow( max( color, 0.0 ), vec3( AGX_POWER ) );
+    float l = dot( color, vec3( 0.2126, 0.7152, 0.0722 ) );
+    color = l + AGX_SAT * ( color - l );
+    color = AgXOutsetMatrix * color;
+    color = pow( max( vec3( 0.0 ), color ), vec3( 2.2 ) );
+    color = LINEAR_REC2020_TO_LINEAR_SRGB * color;
+    return clamp( color, 0.0, 1.0 ); }`).replace('vec3 AgXToneMapping', (TM === 'agx' ? '#define AGX_POWER 1.0\n#define AGX_SAT 1.0' : '#define AGX_POWER 1.35\n#define AGX_SAT 1.4') + '\nvec3 AgXToneMapping');
+} else {
+  THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace('vec3 CustomToneMapping( vec3 color ) { return color; }',
+    `vec3 CustomToneMapping( vec3 color ) {
+    vec3 c = NeutralToneMapping( color );                              // applies toneMappingExposure
     float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-    c = mix( vec3( l ), c, 1.12 );
-    c = clamp( c, 0.0, 1.0 ); c = c * c * ( 3.0 - 2.0 * c ) * 0.35 + c * 0.65;
-    return c; }`);
+    c = clamp( mix( vec3( l ), c, STUDIO_SAT ), 0.0, 1.0 );
+    c = c * c * ( 3.0 - 2.0 * c ) * STUDIO_S + c * ( 1.0 - STUDIO_S );   // Forge's S-curve (display space)
+    return c; }`).replace('vec3 CustomToneMapping', '#define STUDIO_SAT 1.08\n#define STUDIO_S 0.3\nvec3 CustomToneMapping');
+}
 
 // Bloom high-pass that only lets emissive light through: the board shaders write the emissive share of each pixel
 // into alpha as (1 - share), so glossy highlights on the wood or resin never bloom, only the glowing pigment does.
@@ -53,9 +88,12 @@ export class Viewer {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(28, 1, 2, 6000);
     this.controls = new OrbitControls(this.camera, r.domElement);
-    this.controls.enableDamping = true; this.controls.dampingFactor = 0.08;
-    this.controls.maxPolarAngle = Math.PI * 0.47; this.controls.minDistance = 25; this.controls.maxDistance = 2500;
-    this.controls.zoomToCursor = true;
+    // camera like Relief Forge 2.0.7's viewer: OrbitControls about a fixed world up (y), so there is no roll and the horizon
+    // stays level; damping 0.12, screen-space panning; the polar angle is clamped so the camera never dips under the floor.
+    // The board itself never rotates under the mouse; the only board motion is the Sway turntable about the vertical axis.
+    this.camera.up.set(0, 1, 0);
+    this.controls.enableDamping = true; this.controls.dampingFactor = 0.12; this.controls.screenSpacePanning = true;
+    this.controls.minPolarAngle = 0; this.controls.maxPolarAngle = Math.PI * 0.47; this.controls.minDistance = 25; this.controls.maxDistance = 2500;
     this.pmrem = new THREE.PMREMGenerator(r); this.envRT = null; this.envAt = '';
     this.makeEnvScene();
     this.key = new THREE.DirectionalLight(0xffffff, 2.5);
@@ -63,8 +101,11 @@ export class Viewer {
     this.key.shadow.mapSize.set(4096, 4096);
     this.key.shadow.bias = -0.0004; this.key.shadow.normalBias = 0.3; this.key.shadow.radius = 3;   // PCF disc: a soft-box key, not a point
     this.scene.add(this.key, this.key.target);
-    this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', sanded: true,
-                   light: 'studio', az: 220, el: 42, exposure: 1.0, env: 0.5, key: 2.0, ao: 0.6, backdrop: 'dark', meshRes: 1024, margin: 18, thickness: 22 };
+    // Forge's fill: a soft cool directional light opposite the key, no shadow (lifts the shadow side and the board edges)
+    this.fill = new THREE.DirectionalLight(0xc8d8ff, 0.25); this.scene.add(this.fill);
+    this.keyDirW = new THREE.Vector3(0, 1, 0);
+    this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', sanded: true, fillLevel: 0, flood: false, menisc: 0.3,
+                   light: 'studio', az: 220, el: 42, exposure: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
     this.uniforms = this.makeUniforms();
     this.makeBackdrop();
     this.mats = {}; this.depthMats = {}; this.grids = new Map();
@@ -82,9 +123,13 @@ export class Viewer {
     this.controls.addEventListener('start', () => { this.interacting = true; this.interact(); });
     this.controls.addEventListener('end', () => { this.interacting = false; this.lastMove = performance.now(); });
     this.controls.addEventListener('change', () => { this.dirty = true; this.lastMove = performance.now(); });
-    let prev = 0;
+    let prev = 0; const t0 = performance.now();
     const loop = (now) => {
-      const moved = this.controls.update();
+      let moved = this.controls.update();
+      if (this.state.sway && this.group.visible) {
+        // Forge's Sway: the board turns slowly to and fro about the vertical axis; camera, lights and floor stay put
+        this.spin.rotation.y = Math.sin((now - t0) / 2600) * 0.38; this.shadowDirty = true; moved = true;
+      }
       if (moved) this.lastMove = now;
       if (this.quality === 'draft') {
         if (prev && (moved || this.dirty)) this.adapt(now - prev);
@@ -106,14 +151,15 @@ export class Viewer {
     const u = {
       uDepth: { value: blank }, uArt: { value: new THREE.Vector2(300, 300) }, uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
       uMaxDepth: { value: 3 }, uEdge: { value: 0.02 }, uMode: { value: 0 }, uSanded: { value: true }, uFlat: { value: false },
-      uOver: { value: 0.9 }, uStep: { value: 0.3 },
+      uOver: { value: 0.9 }, uStep: { value: 0.3 }, uFillLevel: { value: 0 }, uFlood: { value: false }, uMenisc: { value: 0.3 },
+      uDist: { value: this.blankDist() }, uBoardRect: { value: new THREE.Vector4(0, 0, 300, 300) },
       uWood: { value: Array.from({ length: 14 }, () => new THREE.Vector4()) }, uFinish: { value: new THREE.Vector4(1, 1, 0, 0) },
       uFinishCoatRough: { value: 0.3 }, uFillType: { value: 0 }, uFillColor: { value: new THREE.Color() },
       uFillAbsorb: { value: new THREE.Vector3(1, 1, 1) }, uFillScatter: { value: new THREE.Color() }, uGlowColor: { value: new THREE.Color() },
       uBakeA: { value: null }, uBakeB: { value: null }, uBakeRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uAO: { value: blankAO }, uAOs: { value: 0.6 }, uPlugRot: { value: 1.35 }, uFillF0: { value: new THREE.Color() },
       uFillVein: { value: 0 }, uFillVeinCol: { value: new THREE.Color() }, uKeyShare: { value: 0.6 }, uGlueCol: { value: new THREE.Color('#3a2a1c') },
-      uGlow: { value: 0 }, uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() },
+      uGlow: { value: 0 }, uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() }, uCamBoard: { value: new THREE.Vector3() }, uBoardRot: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) },
     };
     return u;
   }
@@ -137,24 +183,40 @@ export class Viewer {
       f = f.replace('#include <map_fragment>', 'surface(); diffuseColor.rgb = sAlb;');
       f = f.replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(sRough, 0.04, 1.0);');
       f = f.replace('#include <metalnessmap_fragment>', 'float metalnessFactor = sMetal;');
-      f = f.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (sOverrideN) { normal = normalize((viewMatrix * vec4(sN, 0.0)).xyz); }');
+      f = f.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (sOverrideN) { normal = normalize((viewMatrix * vec4(uBoardRot * sN, 0.0)).xyz); }');
       // the clear coat follows the surface it lies on, except over a fill, where it is the resin's own (flat) top
-      f = f.replace('#include <clearcoat_normal_fragment_begin>', '#include <clearcoat_normal_fragment_begin>\n#ifdef USE_CLEARCOAT\n if (sOverrideN) clearcoatNormal = dot(sNc, sNc) > 0.5 ? normalize((viewMatrix * vec4(sNc, 0.0)).xyz) : normal;\n#endif');
+      f = f.replace('#include <clearcoat_normal_fragment_begin>', '#include <clearcoat_normal_fragment_begin>\n#ifdef USE_CLEARCOAT\n if (sOverrideN) clearcoatNormal = dot(sNc, sNc) > 0.5 ? normalize((viewMatrix * vec4(uBoardRot * sNc, 0.0)).xyz) : normal;\n#endif');
       f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance = sEmis;');
-      f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n material.clearcoat = clamp(sCoat,0.0,1.0); material.clearcoatRoughness = clamp(sCoatRough + geometryRoughness, 0.045, 1.0);');
+      f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n material.clearcoat = clamp(sCoat,0.0,1.0); material.clearcoatRoughness = clamp(sCoatRough + geometryRoughness, 0.02, 1.0);');
       // baked occlusion darkens only the light that comes from the environment (the key's own shadowing is the shadow
       // map); specular occlusion uses three's roughness-aware estimate, also for the clear coat
       f = f.replace('#include <aomap_fragment>', `#include <aomap_fragment>
  { float dNV = saturate(dot(normal, -normalize(vViewPosition)));
    reflectedLight.indirectDiffuse *= sAO;
-   reflectedLight.indirectSpecular *= computeSpecularOcclusion(dNV, sAO, material.roughness) * sSpec;
-   reflectedLight.directSpecular *= sSpec;
+   // under a finish film the wood's own reflection mostly vanishes (finish and cell walls have nearly the same index): the
+   // film's top (clear coat) carries the gloss, so the base layer keeps only a share of its specular (no milky veil)
+   float sp = sSpec * (sMetal > 0.5 ? 1.0 : mix(1.0, 0.3, clamp(sCoat, 0.0, 1.0)));
+   reflectedLight.indirectSpecular *= computeSpecularOcclusion(dNV, sAO, material.roughness) * sp;
+   reflectedLight.directSpecular *= sp;
    #if defined( USE_CLEARCOAT )
    clearcoatSpecularIndirect *= computeSpecularOcclusion(dNV, sAO, material.clearcoatRoughness);
+   // the key's glint on a near-mirror coat: GGX's long tail, pushed through exposure and the S-curve, turned a sharp
+   // glint into a big soft blob in close-ups. Squash the tail (x^2/(x+k)) and cap the core: small, crisp, still bright
+   { float cm = max(max(clearcoatSpecularDirect.r, clearcoatSpecularDirect.g), clearcoatSpecularDirect.b);
+     float kq = 1.2 + 8.0 * material.clearcoatRoughness;   // broader (satin) lobes are squashed harder: a sheen, not a blob
+     clearcoatSpecularDirect *= min(cm / (cm + kq), 1.6 / max(cm, 1e-4)); }
+   // the soft box's mirror image on a gloss coat: soft knee, so it reads as a crisp panel rather than a clipped blob
+   { float cm = max(max(clearcoatSpecularIndirect.r, clearcoatSpecularIndirect.g), clearcoatSpecularIndirect.b);
+     if (cm > 0.35) clearcoatSpecularIndirect *= (0.35 + 0.4 * (1.0 - exp(-(cm - 0.35) / 0.4))) / cm; }
    #endif
  }`);
       // alpha = 1 - emissive share of the pixel: the bloom high-pass reads it (the canvas itself has no alpha)
-      f = f.replace('#include <opaque_fragment>', `#include <opaque_fragment>
+      f = f.replace('#include <opaque_fragment>', `
+ // metals: compress only the brightest channel's overshoot (hue kept), so a gold highlight stays gold through the tone
+ // map instead of washing to white
+ if (sMetal > 0.5) { float mx = max(max(outgoingLight.r, outgoingLight.g), outgoingLight.b);
+   if (mx > 0.55) outgoingLight *= (0.55 + 0.45 * (1.0 - exp(-(mx - 0.55) / 0.45))) / mx; }
+ #include <opaque_fragment>
  { float eL = dot(totalEmissiveRadiance, vec3(0.2126, 0.7152, 0.0722)), oL = dot(outgoingLight, vec3(0.2126, 0.7152, 0.0722));
    gl_FragColor.a = 1.0 - clamp(eL / max(oL, 1e-4), 0.0, 1.0); }`);
       sh.fragmentShader = f;
@@ -252,7 +314,8 @@ export class Viewer {
   }
 
   makeBoard() {
-    this.group = new THREE.Group(); this.group.visible = false; this.scene.add(this.group);
+    this.group = new THREE.Group(); this.group.visible = false;
+    this.spin = new THREE.Group(); this.spin.add(this.group); this.scene.add(this.spin);   // turntable pivot at the board centre
     const mk = (part) => {
       const o = new THREE.Mesh(new THREE.BufferGeometry(), this.material(part));
       o.customDepthMaterial = this.depthMaterial(part);
@@ -278,7 +341,7 @@ export class Viewer {
   setDepth(rg, tw, th, artW, artH, maxDepth, ao = null) {
     this.dirty = true; this.shadowDirty = true;
     const first = !this.depth;
-    this.depth = { tw, th, artW, artH, maxDepth }; this.depthVer = (this.depthVer || 0) + 1;
+    this.depth = { tw, th, artW, artH, maxDepth }; this.depthVer = (this.depthVer || 0) + 1; this.rg = rg;
     const U = this.uniforms, old = U.uDepth.value;
     if (old.image.width === tw && old.image.height === th && old.userData.carve) { old.image.data = rg; old.needsUpdate = true; }
     else {
@@ -346,12 +409,16 @@ export class Viewer {
     const flushFill = S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill);
     const step = this.lodStep(D); this.lodSt = step;
     const x0 = -m, z0 = -m, x1 = D.artW + m, z1 = D.artH + m;
-    this.uniforms.uBakeRect.value.set(x0, z0, x1 - x0, z1 - z0);
+    this.uniforms.uBakeRect.value.set(x0, z0, x1 - x0, z1 - z0); this.uniforms.uBoardRect.value.set(x0, z0, x1 - x0, z1 - z0);
     this.topGrid = flushFill ? this.grid(x0, z0, x1, z1, 8, 8) : this.grid(x0, z0, x1, z1, Math.round((x1 - x0) / step), Math.round((z1 - z0) / step));
     this.sides.geometry = this.sideGeometry(x0, z0, x1, z1, -T);
     const over = !S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill);
     this.fillMesh.visible = over;
-    this.fillGrid = over ? this.grid(0, 0, D.artW, D.artH, Math.round(D.artW / step), Math.round(D.artH / step)) : null;
+    // as-poured epoxy: a grid over the art (pinned) or over the whole board top (flood coat)
+    const flood = over && S.fill === 'epoxy' && S.flood;
+    this.fillGrid = !over ? null : flood ? this.grid(x0, z0, x1, z1, Math.round((x1 - x0) / step), Math.round((z1 - z0) / step))
+      : this.grid(0, 0, D.artW, D.artH, Math.round(D.artW / step), Math.round(D.artH / step));
+    if (over && S.fill === 'epoxy') this.ensureDist();
     this.uniforms.uOver.value = S.fill === 'epoxy' ? 0.9 : 1.6;
     this.uniforms.uStep.value = step;
     this.uniforms.uFlat.value = flushFill;
@@ -422,20 +489,51 @@ export class Viewer {
     U.uFillF0.value.set(P.f0 || P.color);
     U.uFillVein.value = P.vein ? 1 : 0; U.uFillVeinCol.value.set(P.vein || '#000000');
     U.uGlowColor.value.set(P.glow || '#000000'); U.uGlow.value = P.type === 3 ? (S.glow ?? 2.2) : 0;
+    const pour = [S.fillLevel, S.flood, S.menisc].join('|');
+    U.uFillLevel.value = S.fillLevel; U.uFlood.value = !!S.flood; U.uMenisc.value = S.menisc;
+    if (pour !== this._pour) { this._pour = pour; this.shadowDirty = true; }   // the pour's shape changed: one shadow redraw
     if (this.flushKey() !== prevFlush) this.buildMeshes();
     this.updateBloom();
   }
-  flushKey() { const S = this.state; return [S.sanded, S.fill, S.meshRes, S.margin].join('|'); }
+  flushKey() { const S = this.state; return [S.sanded, S.fill, S.meshRes, S.margin, !!S.flood].join('|'); }
+  blankDist() { const t = new THREE.DataTexture(new Uint8Array([255]), 1, 1, THREE.RedFormat, THREE.UnsignedByteType); t.needsUpdate = true; return t; }
+  // shrinkage dish needs the distance from each point of a fill region to its edge: a two-pass 3-4 chamfer distance transform
+  // of the carve mask at <= 512 px, once per depth map (only when an epoxy pour is shown), ~5-15 ms; the level, flood and
+  // meniscus controls are then uniforms only
+  ensureDist() {
+    const D = this.depth; if (!D || !this.rg || this.distVer === this.depthVer) return;
+    this.distVer = this.depthVer;
+    const t0 = performance.now(), { tw, th, artW, artH, maxDepth } = D, sc = Math.min(1, 512 / Math.max(tw, th));
+    const w = Math.max(2, Math.round(tw * sc)), h = Math.max(2, Math.round(th * sc));
+    const thr = toHalf(Math.max(this.uniforms.uEdge.value, 1e-3) / maxDepth), rg = this.rg;
+    const mm = artW / w, big = 1e9, f = new Float32Array(w * h);
+    for (let j = 0; j < h; j++) { const sj = Math.min(th - 1, Math.floor((j + 0.5) / sc)); for (let i = 0; i < w; i++) { const si = Math.min(tw - 1, Math.floor((i + 0.5) / sc)); f[j * w + i] = rg[(sj * tw + si) * 2] > thr ? big : 0; } }
+    const a = 1, b = 1.4142;
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { const k = j * w + i; let v = f[k]; if (!v) continue;
+      if (i > 0) v = Math.min(v, f[k - 1] + a); if (j > 0) { v = Math.min(v, f[k - w] + a); if (i > 0) v = Math.min(v, f[k - w - 1] + b); if (i < w - 1) v = Math.min(v, f[k - w + 1] + b); } else v = Math.min(v, a);
+      if (i === 0 || i === w - 1 || j === h - 1) v = Math.min(v, a); f[k] = v; }
+    for (let j = h - 1; j >= 0; j--) for (let i = w - 1; i >= 0; i--) { const k = j * w + i; let v = f[k]; if (!v) continue;
+      if (i < w - 1) v = Math.min(v, f[k + 1] + a); if (j < h - 1) { v = Math.min(v, f[k + w] + a); if (i < w - 1) v = Math.min(v, f[k + w + 1] + b); if (i > 0) v = Math.min(v, f[k + w - 1] + b); } f[k] = v; }
+    const out = new Uint8Array(w * h); for (let k = 0; k < w * h; k++) out[k] = Math.min(255, Math.round(Math.max(0, f[k] - 0.5) * mm / 8 * 255));
+    const tx = new THREE.DataTexture(out, w, h, THREE.RedFormat, THREE.UnsignedByteType);
+    tx.magFilter = tx.minFilter = THREE.LinearFilter; tx.generateMipmaps = false; tx.unpackAlignment = 1; tx.needsUpdate = true;
+    this.uniforms.uDist.value.dispose(); this.uniforms.uDist.value = tx;
+    this.distMs = performance.now() - t0;
+  }
 
   setLighting(o) {
     this.dirty = true;
-    if (o.light && LIGHTS[o.light]) { const L = LIGHTS[o.light]; Object.assign(this.state, { az: L.az, el: L.el, key: L.key, env: L.env, warm: L.warm }); }
+    if (o.light && LIGHTS[o.light]) { const L = LIGHTS[o.light]; Object.assign(this.state, { az: L.az, el: L.el, key: L.key, env: L.env, warm: L.warm, fillLight: L.fill, exposure: L.exp }); }
     Object.assign(this.state, o);
     const S = this.state;
-    this.renderer.toneMappingExposure = S.exposure;
-    this.key.intensity = S.key; this.key.color.set(S.warm || '#fff4e6');
+    this.renderer.toneMappingExposure = S.exposure * EXPOSURE_CAL;
+    this.key.intensity = S.key;
+    // Forge warmth: white toward a warm tungsten (#ffcf9a) or a cool daylight (#bcd4ff)
+    const w = +S.warm || 0; this.key.color.set(0xffffff).lerp(new THREE.Color(w >= 0 ? '#ffcf9a' : '#bcd4ff'), Math.min(Math.abs(w), 1));
+    this.fill.intensity = S.fillLight ?? 0.25;
+    if (this.key.castShadow !== (S.shadows !== false)) { this.key.castShadow = S.shadows !== false; this.shadowDirty = true; }
     this.scene.environmentIntensity = S.env;
-    this.uniforms.uAOs.value = S.ao ?? 0.6;
+    this.uniforms.uAOs.value = S.ao ?? 0.25;
     const dark = S.backdrop === 'dark';
     const bg = dark ? 0x141312 : 0xd9d6d0;
     if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 900, 2600); }
@@ -457,7 +555,10 @@ export class Viewer {
     this.key.target.position.set(0, S.thickness, 0);
     const c = this.key.shadow.camera; c.left = -R; c.right = R; c.top = R; c.bottom = -R; c.near = R * 1.5; c.far = R * 4.5;
     c.updateProjectionMatrix();
-    this.uniforms.uKeyDir.value.copy(dir);
+    this.keyDirW.copy(dir); this.syncBoardFrame();
+    // Forge places the fill opposite the key, at half the key's distance in height
+    this.fill.position.set(-dir.x * R * 3, R * 1.5 + S.thickness, -dir.z * R * 3);
+    this.fill.target = this.key.target;
     // share of the board top's irradiance that the key provides (the resin floor model needs it); the studio
     // environment gives roughly 4 units of irradiance per unit of intensity to an upward face (soft box ~2.9, front fill ~1, room)
     this.updateKeyShare();
@@ -466,7 +567,8 @@ export class Viewer {
   }
 
   updateKeyShare() {
-    const S = this.state, kE = S.key * Math.max(this.uniforms.uKeyDir.value.y, 0), eE = S.env * 4.0;
+    const S = this.state, kE = S.key * Math.max(this.uniforms.uKeyDir.value.y, 0), fd = this.fill.position.clone().sub(this.key.target.position).normalize();
+    const eE = S.env * ENV.irr + (S.fillLight ?? 0.25) * Math.max(fd.y, 0);
     this.uniforms.uKeyShare.value = kE / Math.max(kE + eE, 1e-3);
   }
 
@@ -477,9 +579,12 @@ export class Viewer {
   // happens when it settles.
   makeEnvScene() {
     const sc = this.envScene = new THREE.Scene();
-    sc.add(new THREE.Mesh(new THREE.BoxGeometry(100, 100, 100), new THREE.MeshBasicMaterial({ color: new THREE.Color('#141416'), side: THREE.BackSide })));
+    sc.add(new THREE.Mesh(new THREE.BoxGeometry(100, 100, 100), new THREE.MeshBasicMaterial({ color: new THREE.Color(ENV.room), side: THREE.BackSide })));
     const panel = (w, h, c, k) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(k), side: THREE.DoubleSide })); sc.add(m); return m; };
-    this.envKey = panel(40, 30, '#fff0dc', 7); this.envStrip = panel(7, 36, '#dde6ff', 2.5); this.envFront = panel(60, 40, '#f2f5ff', 1.0);
+    // a compact bright soft box (crisp highlight on gloss, not a white wash), a thin cool strip, a dim front fill, and a
+    // low warm band around the horizon that lights the board's edges so end and side grain read in low views
+    this.envKey = panel(...ENV.key); this.envStrip = panel(...ENV.strip); this.envFront = panel(...ENV.front);
+    for (let i = 0; i < 4; i++) { const m = panel(96, 14, ENV.band[0], ENV.band[1]); const a = i * Math.PI / 2; m.position.set(Math.sin(a) * 47, 3, Math.cos(a) * 47); m.lookAt(0, 3, 0); }
     this.envFloor = panel(100, 100, '#2a2622', 1.0); this.envFloor.rotation.x = -Math.PI / 2; this.envFloor.position.y = -12;
   }
   buildEnv(force = false) {
@@ -516,6 +621,7 @@ export class Viewer {
   // ------------------------------------------------------------ camera
   setView(name) {
     this.dirty = true;
+    if (!this.state.sway && this.spin.rotation.y) { this.spin.rotation.y = 0; this.shadowDirty = true; }   // as Forge's fit()
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state;
     const R = Math.max(D.artW, D.artH) + 2 * S.margin, t = this.controls.target, cam = this.camera;
     const fit = R / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2))) * 1.12;
@@ -531,9 +637,14 @@ export class Viewer {
     else if (name === 'corner') { t.set(D.artW * 0.32, S.thickness, D.artH * 0.38); put(62, 40, fit * 0.6); }
     cam.lookAt(t); this.controls.update();
   }
+  setSway(on) {
+    this.state.sway = !!on;
+    if (!on) { this.spin.rotation.y = 0; this.shadowDirty = true; this.lastMove = performance.now(); }
+    this.dirty = true;
+  }
   setCloseUp(u, v) { // art mm
     const D = this.depth, S = this.state; if (!D) return;
-    this.controls.target.set(u - D.artW / 2, S.thickness, v - D.artH / 2); this.setView('close');
+    this.spin.updateMatrixWorld(true); this.controls.target.copy(this.group.localToWorld(new THREE.Vector3(u, 0, v))); this.setView('close');
   }
   focusAt(e) {
     const r = this.renderer.domElement.getBoundingClientRect();
@@ -578,7 +689,16 @@ export class Viewer {
     if (pr !== this.draftPR) { this.draftPR = pr; this.renderer.setPixelRatio(pr); this.resize(); }
   }
   requestRender(full = false) { if (full) this.setQuality('full'); this.dirty = true; }
+  // the shaders work in board millimetres; with the turntable the board frame turns about world y, so the camera position,
+  // the key direction and the normal rotation are handed over in that frame (cheap: three uniforms per frame)
+  syncBoardFrame() {
+    const U = this.uniforms; this.spin.updateMatrixWorld(true);
+    U.uCamBoard.value.copy(this.camera.position); this.group.worldToLocal(U.uCamBoard.value);
+    const ry = this.spin.rotation.y, c = Math.cos(ry), sn = Math.sin(ry), m = U.uBoardRot.value; m[0] = c; m[2] = -sn; m[6] = sn; m[8] = c;   // column-major rotation about y
+    U.uKeyDir.value.copy(this.keyDirW).applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.spin.rotation.y);
+  }
   render() {
+    this.syncBoardFrame();
     if (this.group.visible) this.bakeIfNeeded();
     if (this.quality === 'full' && this.depth && this.lodStep(this.depth) !== this.lodSt) this.buildMeshes();   // zoom settled: re-pick the grid
     if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; this.shadowDraft = this.quality === 'draft'; }

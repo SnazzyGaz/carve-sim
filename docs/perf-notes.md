@@ -156,3 +156,42 @@ Notes:
   - first glow switch: +0.1 s, a one-off for compiling the bloom programs
   - the perf.py tail items (char, glow, light direction, sanded): in that run the before process ran its tail alone after the after process had finished, so it had less load
 - GPU texture memory went up by 14 MB (the AO texture and the 1024 preview bake). Vertex buffers went down from 89 MB to 22 MB.
+
+
+## Second commit: look pass, Forge lighting, pour controls, Forge camera — quick re-check
+
+The box was quiet this time (only the unrelated process, at about 2 cores). perf.py ran on the before build (3986014, :8770) and then on the after build (:8771) back to back, so these two columns are directly comparable, and they're far less loaded than the table above. The new pour and sway probes come from lag.py on the after build only.
+
+| Probe | Before (3986014) | After (materials-v2) | |
+|---|---:|---:|---|
+| Triangles, settled full frame (incl. shadow pass) | 2,631,230 | 656,670 | |
+| Triangles, drag frame | 658,964 | 164,750 | |
+| Settled full-quality frame | 3.2 s | 1.1 s | 2.9× faster |
+| Orbit drag frame (p50) | 689 ms | 330 ms | 2.1× faster |
+| Orbit drag frame (mean) | 834 ms | 362 ms | 2.3× faster |
+| Full frame after releasing orbit | 1.5 s | 554 ms | 2.6× faster |
+| perf.py change species_walnut | 5.6 s | 1.3 s | 4.3× faster |
+| perf.py change finish_gloss | 2.9 s | 1.3 s | 2.3× faster |
+| perf.py change fill_epoxy_ocean | 226 ms | 239 ms | 1.1× slower |
+| perf.py change unsanded_overpour | 5.5 s | 2.8 s | 1.9× faster |
+| perf.py change sanded_again | 238 ms | 241 ms | same |
+| perf.py change fill_char | 3.2 s | 1.4 s | 2.3× faster |
+| perf.py change light_dir_slider | 895 ms | 398 ms | 2.2× faster |
+| perf.py change fill_glow_bloom | 1.2 s | 1.8 s | 1.4× slower |
+| Threshold slider → traced frame | 13.6 s | 13.5 s | same · longest task 5.8 s → 3.6 s |
+| Pour (new) pour_first: to first frame | — | 2.5 s | new · shadow redraws 1, longest task 2.4 s |
+| Pour (new) level_slider: frame while dragging (mean) | — | 572 ms | new · shadow redraws 7, longest task 2.4 s |
+| Pour (new) menisc_slider: frame while dragging (mean) | — | 590 ms | new · shadow redraws 7, longest task 2.1 s |
+| Pour (new) flood_on: to first frame | — | 1.9 s | new · shadow redraws 1, longest task 1.9 s |
+| Pour (new) level_slider_flood: frame while dragging (mean) | — | 528 ms | new · shadow redraws 7, longest task 2.0 s |
+| Sway turntable (new): frame, full quality + shadow redraw | — | 2.2 s | new |
+| Cold open → first 3D | 13.0 s | 8.2 s | 1.6× faster |
+| Cold open → traced 3D | 18.7 s | 15.3 s | 1.2× faster |
+| Load: longest main-thread task | 7.0 s | 3.0 s | 2.4× faster |
+| GPU textures / buffers | 287.4 / 88.8 MB | 301.6 / 22.2 MB | |
+| Console errors | 0 | 0 | |
+
+- The look fixes are shader math (a tone-map curve, specular squash and cap terms) and cost nothing measurable. Every frame probe is the same as or faster than the first commit's after numbers.
+- **Pour level / meniscus / flood drags** are about 0.5–0.6 s per frame on SwiftShader. They're uniforms against the baked depth with no rebake. But the pour surface casts shadows, so each step redraws the shadow map (7 redraws per 6-step drag, the same as the light-direction slider). The first switch to an as-poured epoxy (2.5 s) includes the one-off distance-field bake on the main thread and a shader compile.
+- **Sway** renders full-quality frames with a shadow redraw on every frame (2.2 s/frame on SwiftShader; it's smooth on a real GPU, but it's the heaviest steady state in the app).
+- Threshold → traced is unchanged, which is expected: the trace path wasn't optimised further (SVG-showroom direction).

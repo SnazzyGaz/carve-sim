@@ -9,30 +9,62 @@ uniform float uMaxDepth;
 uniform int uPart;            // 0 board top, 1 board sides, 2 fill overpour mesh
 uniform int uMode;            // 0 none, 1 epoxy, 2 inlay, 3 reverse inlay, 4 char
 uniform bool uFlat;           // top drawn flat (flush fills)
-uniform float uOver;          // how proud the unsanded fill stands, mm
+uniform float uOver;          // how proud the unsanded inlay plug stands, mm
+uniform vec2 uTexel;          // 1/texture size
+uniform float uEdge;          // depth iso-level of the cut line
+uniform float uFillLevel;     // as-poured epoxy level, mm against the board top (- under-filled, 0 flush, + overpour)
+uniform bool uFlood;          // overpour spreads over the board as a level flood coat (else pinned at the channel: <= flush)
+uniform float uMenisc;        // shrinkage dish + wall meniscus amount (0..1)
+uniform sampler2D uDist;      // r = distance to the fill region's edge / DIST_MAX (low-res, baked once per depth map)
+uniform vec4 uBoardRect;      // board top in board mm: x0, z0, width, height
 varying vec3 vBoard;
+const float DIST_MAX = 8.0;
 vec2 tex(vec2 uv){
   if (uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) return vec2(0.0);
   return texture2D(uDepth, uv).rg;
 }
+float depthAtC(vec2 uv){ return tex(uv).r * uMaxDepth; }
 // unsanded fill surface height (board mm, 0 = board top): epoxy overpour bulge with meniscus spill, or a proud inlay plug.
 // Points well under the board top drop below it, where the board hides them.
 varying float vHide;
+float fHide;   // set by fillH: 1 where there is no resin at this point (vertex hide flag)
 float fillH(vec2 p){
-  vec2 t = tex(p / uArt); float d = t.r * uMaxDepth, b = t.g;
+  vec2 uv = p / uArt;
+  vec2 t = tex(uv); float d = t.r * uMaxDepth, b = t.g;
+  fHide = 0.0;
   if (uMode == 1){
-    float h = uOver * smoothstep(0.02, 0.55, b);
-    return max(h, -d + 0.02) + ((h < 0.03 && d < 0.02) ? -0.5 : 0.0);
+    // as-poured epoxy at a set level, all against the baked depth (no rebake when the level moves):
+    //  - shrinkage: resin shrinks ~1-2% of its thickness as it cures, so wide/deep pours dish in the middle (the dish
+    //    follows the low-res distance-to-edge field) and a flood coat telegraphs faint dips over the channels;
+    //  - meniscus: at a free edge the resin wets the wall and climbs it a little (0.2 mm at full), measured from the
+    //    contact line with the local wall slope (sub-texel exact, like the glue line);
+    //  - pinned (default): the level can't rise above the board top inside the carve outline; flood: above flush the
+    //    resin is one level coat over the whole board top, eased off at the board edge.
+    float dist = texture2D(uDist, clamp(uv, 0.0, 1.0)).r * DIST_MAX;
+    if (uFlood && uFillLevel > 0.0){
+      vec2 q = p - uBoardRect.xy; float e = min(min(q.x, uBoardRect.z - q.x), min(q.y, uBoardRect.w - q.y));
+      if (e < 0.0) { fHide = 1.0; return -1.0; }
+      float tel = uMenisc * 0.03 * d * smoothstep(0.0, 3.0, dist);
+      return uFillLevel * smoothstep(-0.6, 2.4, e) * (1.0 - 0.25 * smoothstep(1.0, 0.0, e)) - tel;
+    }
+    float L = min(uFillLevel, 0.0);
+    float res = d + L;                                             // resin thickness here
+    if (d < uEdge * 0.5 || res < -0.6) { fHide = 1.0; return min(-d, 0.0) - 0.6; }
+    float sl = max(length(vec2((depthAtC(uv + vec2(uTexel.x, 0.0)) - depthAtC(uv - vec2(uTexel.x, 0.0))) / (2.0 * uTexel.x * uArt.x),
+                               (depthAtC(uv + vec2(0.0, uTexel.y)) - depthAtC(uv - vec2(0.0, uTexel.y))) / (2.0 * uTexel.y * uArt.y))), 0.05);
+    float dc = max(res, 0.0) / sl;                                 // mm in from the contact line
+    float men = uMenisc * 0.2 * exp(-dc / 0.4);
+    float dish = uMenisc * 0.04 * max(res, 0.0) * smoothstep(0.2, 4.0, dist);
+    return min(L + men - dish, 0.0);
   }
   // inlay plug standing proud before levelling, with a slight (~0.3 mm) eased edge instead of a vertical cliff
+  if (d <= 0.02) fHide = 1.0;
   return d > 0.02 ? uOver * smoothstep(0.02, 0.5, d) : -0.6;
 }
 `;
 
 export const PARS = /* glsl */`
-uniform vec2 uTexel;          // 1/texture size
 uniform float uStep;          // grid step mm (fill normals)
-uniform float uEdge;          // depth iso-level of the cut line
 uniform bool uSanded;
 uniform vec4 uWood[14];       // 2 species x 7 vec4
 uniform vec4 uFinish;         // darken, sat, rough add, coat
@@ -45,7 +77,9 @@ uniform vec3 uGlowColor;
 uniform float uGlow;
 uniform float uFillRough;
 uniform float uCharScale;
-uniform vec3 uKeyDir;         // world dir to key light
+uniform vec3 uKeyDir;         // dir to the key light, in the board frame (the board can sway about y)
+uniform vec3 uCamBoard;       // camera position in board mm
+uniform mat3 uBoardRot;       // board frame -> world rotation
 uniform vec3 uOrigin;         // world position of the art's top-left corner on the board top
 uniform sampler2D uBakeA;     // baked wood of the board top & carve (rgb = albedo * 0.75, a = roughness), mipmapped
 uniform sampler2D uBakeB;     // baked insert wood for inlays (flat)
@@ -276,7 +310,7 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
   vec3 col = uFillColor;
   // the pour's surface: self-levelled gloss before sanding; after sanding it takes the finish (raw = frosted)
   float coat = uSanded ? (uFinish.w > 0.05 ? max(uFinish.w, 0.6) : 1.0) : 1.0;
-  float coatR = uSanded ? (uFinish.w > 0.05 ? max(uFinishCoatRough*0.6, 0.05) : 0.38) : 0.02;
+  float coatR = uSanded ? (uFinish.w > 0.05 ? max(uFinishCoatRough*0.6, 0.025) : 0.38) : 0.02;
   sMetal = 0.0; sRough = uFillRough; sCoat = coat; sCoatRough = coatR; sSpec = 0.0;
   if (uFillType == 0){
     // pigmented resin: diffuse body under the gloss interface
@@ -345,7 +379,7 @@ void surface(){
   vec2 tg = tex(uv);
   float d = tg.r * uMaxDepth;
   float g = tg.g;
-  vec3 Vw = normalize(P + uOrigin - cameraPosition);
+  vec3 Vw = normalize(P - uCamBoard);
   sMetal = 0.0; sCoat = uFinish.w; sCoatRough = uFinishCoatRough; sEmis = vec3(0.0); sAO = 1.0; sOverrideN = true; sSpec = 1.0;
   sN = vec3(0.0,1.0,0.0); sNc = vec3(0.0);
 #if CARVE_PART == 1
@@ -355,6 +389,7 @@ void surface(){
   if (uMode == 4 && !uSanded) { sAlb = charSurface(P, 0.0, sRough); sCoat = 0.0; }
 #elif CARVE_PART == 2
   if (vHide > 0.999) discard;   // triangles wholly under the board top are not part of the pour
+  fillH(P.xz); if (fHide > 0.5) discard;   // per pixel: crisp contact line
   // proud fill before sanding (epoxy overpour / inlay plug); normal from the same height the GPU displaced to
   float e = uStep;
   float hx = fillH(P.xz + vec2(e, 0.0)) - fillH(P.xz - vec2(e, 0.0));
@@ -459,6 +494,6 @@ export const BAKE_FRAG = () => '#define CARVE_BAKE\n#define CARVE_PART -1\n' + C
 export const VERT_MAIN = /* glsl */`
 if (uPart == 0 && !uFlat) transformed.y = -tex(transformed.xz / uArt).r * uMaxDepth;
 vHide = 0.0;
-if (uPart == 2){ transformed.y = fillH(transformed.xz); vHide = transformed.y > 0.015 ? 0.0 : 1.0; }
+if (uPart == 2){ transformed.y = fillH(transformed.xz); vHide = fHide; }
 vBoard = transformed;
 `;
