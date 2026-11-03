@@ -4,11 +4,40 @@ A browser showroom for CNC carvings. Drop in a finished SVG (ideally one made by
 
 **[Open Carve Sim →](https://snazzygaz.github.io/carve-sim/)**
 
-![Fisherman in ash, charred grooves](docs/fisherman-ash.jpg)
+<p align="center"><img src="docs/readme/skull-walnut-elm-hero.jpg" width="900" alt="Samurai skull carved in black walnut with an elm inlay, sanded flush"></p>
+<p align="center"><sub>Samurai skull sample · black walnut, oiled · elm inlay, sanded flush · Studio light</sub></p>
 
 ## Works with photo-to-cnc-svg
 
 Carve Sim is the preview half of a pair. [photo-to-cnc-svg](https://github.com/SnazzyGaz/photo-to-cnc-svg) is an agent skill that turns a photo into bold black-and-white art and then into a CNC-ready SVG, at real size in mm with a `vcarve` layer and CNC metadata. Carve Sim opens those SVGs and shows the carve in different woods and fills before you cut. The bundled samples were made with it.
+
+## Gallery
+
+All rendered in Carve Sim from the bundled samples (300 mm, 60° V-bit, 3 mm deep). Same file, different board and fill.
+
+<table>
+<tr>
+<td width="33%"><img src="docs/readme/skull-walnut-white.jpg" alt="Samurai skull in walnut with white epoxy"><br><sub>Walnut · white epoxy, sanded</sub></td>
+<td width="33%"><img src="docs/readme/skull-wenge-maple.jpg" alt="Samurai skull in wenge with a maple inlay"><br><sub>Wenge · hard maple inlay</sub></td>
+<td width="33%"><img src="docs/readme/skull-bogoak-brass.jpg" alt="Samurai skull in bog oak with brass epoxy"><br><sub>Bog oak · brass metallic epoxy</sub></td>
+</tr>
+<tr>
+<td width="33%"><img src="docs/readme/stag-ash-walnut.jpg" alt="Regal stag in ash with a walnut inlay"><br><sub>Regal stag · ash · walnut inlay</sub></td>
+<td width="33%"><img src="docs/readme/stag-cherry-black.jpg" alt="Regal stag in cherry with black epoxy"><br><sub>Regal stag · cherry · black epoxy</sub></td>
+<td width="33%"><img src="docs/readme/stag-maple-raw.jpg" alt="Regal stag in hard maple, unfilled, raking light"><br><sub>Regal stag · hard maple, no fill · Raking light</sub></td>
+</tr>
+<tr>
+<td width="33%"><img src="docs/readme/fisherman-sycamore-walnut.jpg" alt="Old fisherman in sycamore with a walnut inlay"><br><sub>Old fisherman · sycamore · walnut inlay</sub></td>
+<td width="33%"><img src="docs/readme/fisherman-whiteoak-black.jpg" alt="Old fisherman in white oak with black epoxy"><br><sub>Old fisherman · white oak · black epoxy · Daylight</sub></td>
+<td width="33%"><img src="docs/readme/mockup-fisherman-ash-walnut.jpg" alt="Mock-up of the fisherman board in a workshop"><br><sub>Mock-up: a generated workshop photo with the real trace laid in, ash and walnut</sub></td>
+</tr>
+</table>
+
+**Raking light shows the depth.** Close-up of the skull in walnut with no fill: the V-bit walls, the flat floors where wide areas bottom out at 3 mm, and the fine cord and rivet detail.
+
+<img src="docs/readme/skull-walnut-raking-closeup.jpg" alt="Raking-light close-up of the samurai skull carve in walnut, unfilled">
+
+The samurai skull is an inverted design: the light parts of the art are cut and filled, so it reads as a pale image on a dark board. It opens on walnut with white epoxy.
 
 ## What it does
 
@@ -20,6 +49,9 @@ Carve Sim is the preview half of a pair. [photo-to-cnc-svg](https://github.com/S
 - **Traces an image if you have no SVG.** A clean black-and-white PNG or JPG can be traced into a CNC SVG in a side panel. It loads only when opened.
 
 Everything runs in your browser and nothing is uploaded. It works offline once it has loaded.
+
+<img src="docs/readme/ui-overview.jpg" alt="Carve Sim in the browser: artwork and samples on the left, the 3D board in the middle, wood, light and fill on the right">
+<p><sub>The app: samples and artwork on the left, the board in the middle, wood, light and fill on the right.</sub></p>
 
 ## Run it
 
