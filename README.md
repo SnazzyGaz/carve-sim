@@ -6,6 +6,10 @@ A browser showroom for CNC carvings. Drop in a finished SVG (ideally one made by
 
 ![Fisherman in ash, charred grooves](docs/fisherman-ash.jpg)
 
+## Works with photo-to-cnc-svg
+
+Carve Sim is the preview half of a pair. [photo-to-cnc-svg](https://github.com/SnazzyGaz/photo-to-cnc-svg) is an agent skill that turns a photo into bold black-and-white art and then into a CNC-ready SVG, at real size in mm with a `vcarve` layer and CNC metadata. Carve Sim opens those SVGs and shows the carve in different woods and fills before you cut. The bundled samples were made with it.
+
 ## What it does
 
 - **Reads the carve from the SVG.** V-carve, pockets, stepped pocket levels and engrave lines, at the file's real size, bit angle and depths.
