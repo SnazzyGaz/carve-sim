@@ -4,6 +4,7 @@
   "private": true,
   "description": "Carve Sim: B/W art to CNC-ready SVG with bit-rule checks and a 3D wood/inlay/epoxy preview. Static web app, runs fully in the browser.",
   "license": "GPL-2.0-or-later",
+  "author": "Garyck Arntzen (https://x.com/_mintydoge)",
   "scripts": {
     "vendor": "node tools/build-vendor.mjs",
     "serve": "cd app && python3 -m http.server 8766",

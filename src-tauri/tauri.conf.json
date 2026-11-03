@@ -30,7 +30,7 @@
     "category": "GraphicsAndDesign",
     "shortDescription": "B/W art to CNC-ready SVG with a 3D wood, inlay and epoxy preview",
     "longDescription": "Carve Sim turns black-and-white art into a CNC-ready SVG and previews the carve in 3D in wood, with inlays and epoxy fills. Everything runs locally.",
-    "copyright": "Gaz, GPL-2.0-or-later",
+    "copyright": "© 2026 Garyck Arntzen, GPL-2.0-or-later",
     "license": "GPL-2.0-or-later",
     "icon": [
       "icons/32x32.png",

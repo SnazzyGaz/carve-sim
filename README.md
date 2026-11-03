@@ -82,4 +82,4 @@ The desktop shell is [Tauri v2](https://v2.tauri.app/) in `src-tauri/`. It loads
 
 ## Licence
 
-GPL-2.0-or-later, because the tracer uses potrace. three.js is MIT and OpenCV.js is Apache-2.0. More detail is in `docs/`.
+© 2026 Garyck Arntzen ([@_mintydoge](https://x.com/_mintydoge)). GPL-2.0-or-later, because the tracer uses potrace. three.js is MIT and OpenCV.js is Apache-2.0. More detail is in `docs/`.
