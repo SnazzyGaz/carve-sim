@@ -42,7 +42,7 @@ The samurai skull is an inverted design: the light parts of the art are cut and 
 ## What it does
 
 - **Reads the carve from the SVG.** V-carve, pockets, stepped pocket levels and engrave lines, at the file's real size, bit angle and depths.
-- **Shows it in real materials.** Sixteen woods (pale, mid, dark and red, grouped by tone) plus MDF, raw or oiled. Fills: epoxy in suggested colours or any colour you pick (opaque, metallic or tinted), or a wood inlay. Fills can be shown sanded flush or as poured.
+- **Shows it in real materials.** Seventeen woods (pale, mid, dark and red, grouped by tone, including birch plywood with its plies showing in the cut) plus MDF, raw or oiled. Fills: paint in the carve with the face masked, epoxy in suggested colours or any colour you pick (opaque, metallic or tinted), a wood inlay, or a reverse inlay (the design stays board wood, the background is the other wood). Epoxy and inlays can be shown sanded flush or as poured.
 - **Lights it for judging the carve.** Studio, Raking (shows depth and wall quality), Overhead and Daylight presets, with direction and brightness controls.
 - **Lets you compare.** Preset camera views, a slow turntable, and A/B looks to flip between two material choices.
 - **Exports a PNG** of the view, up to 4× resolution.

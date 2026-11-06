@@ -1,7 +1,7 @@
 // Carve Sim · SVG showroom. Import a finished SVG (from the CNC skill or any vector art) -> one bake in a worker ->
 // the 3D board in your choice of wood, finish, fill and light. The old image tracer is a lazy side panel (trace-panel.js).
 import { Viewer } from './viewer.js';
-import { SPECIES, FINISHES, FILLS, LIGHTS, customFill } from './materials.js';
+import { SPECIES, FINISHES, FILLS, PAINTS, LIGHTS, customFill } from './materials.js';
 import { parseSvg, rasterFor, DEFAULT_WIDTH_MM } from './svg-import.js';
 
 const $ = (s) => document.querySelector(s);
@@ -74,7 +74,7 @@ function woodSet(sel, v) { segSet(sel, v); const s = SPECIES[v]; if (s) showGrou
 // an inlay of the board's own wood hides the carve: warn, and when Inlay is first picked, start from a contrasting wood
 const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
 function contrastWood(k) { const L = lum(SPECIES[k].early); return Object.keys(SPECIES).filter((x) => x !== 'mdf').sort((a, b) => Math.abs(lum(SPECIES[b].early) - L) - Math.abs(lum(SPECIES[a].early) - L))[0]; }
-function inlayCheck() { const S = viewer.state; $('#inlaySame').classList.toggle('hidden', !(S.fill === 'inlay' && S.insert === S.species)); }
+function inlayCheck() { const S = viewer.state; $('#inlaySame').classList.toggle('hidden', !((S.fill === 'inlay' || S.fill === 'reverse') && S.insert === S.species)); }
 woodChips('#species', 'species'); woodChips('#inserts', 'insert');
 $('#finish').innerHTML = Object.entries(FINISHES).map(([k, f]) => `<button data-v="${k}">${f.name}</button>`).join('');
 seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', viewer.state.finish);
@@ -96,21 +96,29 @@ function customUI() {
   $('#customSw').style.background = resinSw(customFill(S.customColor, +S.customType));
   $('#custom').classList.toggle('on', S.fillPreset === 'custom');
 }
+// paint: presets plus any colour (flat satin)
+$('#paints').innerHTML = Object.entries(PAINTS).map(([k, f]) => `<button data-v="${k}"><span class="sw" style="background:${resinSw(f)}"></span>${f.name}</button>`).join('');
+function paintUI() { const S = viewer.state; segSet('#paints', S.paint); $('#paintColor').value = S.paintColor; $('#paintSw').style.background = S.paintColor; $('#paintCustom').classList.toggle('on', S.paint === 'custom'); }
+$$('#paints button').forEach((b) => b.onclick = () => { viewer.setMaterial({ paint: b.dataset.v }); paintUI(); });
+$('#paintColor').addEventListener('input', (e) => { viewer.interact(); viewer.setMaterial({ paint: 'custom', paintColor: e.target.value }); paintUI(); });
+paintUI();
 function useCustom(o) { viewer.interact(); viewer.setMaterial({ ...o, fillPreset: 'custom' }); segSet('#resins', 'custom'); customUI(); }
 $('#customColor').addEventListener('input', (e) => useCustom({ customColor: e.target.value }));
 seg('#customType', (v) => useCustom({ customType: +v }));
 customUI();
 function fillUI(v) {
   $('#fillEpoxy').classList.toggle('hidden', v !== 'epoxy');
-  $('#fillInlay').classList.toggle('hidden', v !== 'inlay');
-  $('#sandRow').classList.toggle('hidden', v === 'none');
+  $('#fillPaint').classList.toggle('hidden', v !== 'paint');
+  $('#fillInlay').classList.toggle('hidden', v !== 'inlay' && v !== 'reverse');
+  $('#inlayLabel').textContent = v === 'reverse' ? 'Background species (the design stays board wood)' : 'Inlay species (fills the carve)';
+  $('#sandRow').classList.toggle('hidden', v === 'none' || v === 'paint');
   pourUI(); inlayCheck();
 }
 // as-poured controls only mean something before the face is sanded, so they appear when Sanded flush is off
 function pourUI() { $('#pourCtl').classList.toggle('hidden', !(viewer.state.fill === 'epoxy' && !viewer.state.sanded)); }
 seg('#fill', (v) => {
   const o = { fill: v };
-  if (v === 'inlay' && viewer.state.insert === viewer.state.species) o.insert = contrastWood(viewer.state.species);
+  if ((v === 'inlay' || v === 'reverse') && viewer.state.insert === viewer.state.species) o.insert = contrastWood(viewer.state.species);
   viewer.setMaterial(o); woodSet('#inserts', viewer.state.insert); fillUI(v);
 });
 $('#sanded').onchange = (e) => { viewer.setMaterial({ sanded: e.target.checked }); pourUI(); };
@@ -150,7 +158,7 @@ $$('.tabs>button').forEach((b) => b.onclick = () => {
 
 // ---------------------------------------------------------------- look A / B
 // two complete looks (wood, finish, fill, light) to flip between; edits always go to the active letter
-const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'customColor', 'customType', 'insert', 'sanded', 'fillLevel', 'flood', 'menisc'];
+const LOOK_M = ['species', 'finish', 'fill', 'fillPreset', 'customColor', 'customType', 'paint', 'paintColor', 'insert', 'sanded', 'fillLevel', 'flood', 'menisc'];
 const LOOK_L = ['az', 'el', 'key', 'warm', 'fillLight', 'env', 'exposure', 'ao', 'bright', 'shadows', 'backdrop'];
 const looks = { A: null, B: null }; let lookOn = 'A';
 const grabLook = () => { const S = viewer.state, m = {}, l = { light: S.light }; for (const k of LOOK_M) m[k] = S[k]; for (const k of LOOK_L) l[k] = S[k]; return { m, l }; };
@@ -411,7 +419,7 @@ $('#btnPng').onclick = async () => {
 
 // helpers for scripted renders (tests, batch beauty shots)
 app.set = (o) => {
-  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); woodSet('#species', viewer.state.species); woodSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
+  if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); woodSet('#species', viewer.state.species); woodSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); paintUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
   if (o.light) { viewer.setLighting(o.light); syncLightSliders(); }
   if (o.view) viewer.setView(o.view, true);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);

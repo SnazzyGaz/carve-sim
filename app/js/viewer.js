@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { COMMON, PARS, VERT_MAIN, BAKE_VERT, BAKE_FRAG } from './shader.js';
-import { SPECIES, FINISHES, FILLS, LIGHTS, customFill } from './materials.js';
+import { SPECIES, FINISHES, FILLS, PAINTS, LIGHTS, customFill } from './materials.js';
 
 const lin = (hex) => new THREE.Color(hex); // ColorManagement: hex is sRGB -> stored linear
 const SETTLE_MS = 160;
@@ -88,7 +88,7 @@ export class Viewer {
     // Forge's fill: a soft cool directional light opposite the key, no shadow (lifts the shadow side and the board edges)
     this.fill = new THREE.DirectionalLight(0xc8d8ff, 0.25); this.scene.add(this.fill);
     this.keyDirW = new THREE.Vector3(0, 1, 0);
-    this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', customColor: '#b5452c', customType: 0, sanded: true, fillLevel: 0, flood: false, menisc: 0.3,
+    this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', paint: 'black', paintColor: '#2a4a7a', customColor: '#b5452c', customType: 0, sanded: true, fillLevel: 0, flood: false, menisc: 0.3,
                    light: 'studio', az: 220, el: 42, exposure: 1.0, bright: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
     this.uniforms = this.makeUniforms();
     this.makeBackdrop();
@@ -538,15 +538,16 @@ export class Viewer {
       const W = U.uWood.value;
       W[k * 7 + 0].set(e.r, e.g, e.b, s.spacing); W[k * 7 + 1].set(l.r, l.g, l.b, s.contrast);
       W[k * 7 + 2].set(p.r, p.g, p.b, s.pore_amt); W[k * 7 + 3].set(s.ring_porous, s.rays, s.ribbon, s.warp);
-      W[k * 7 + 4].set(s.figure, s.pore_len, s.sharp, s.limed); W[k * 7 + 5].set(st.r, st.g, st.b, s.streakAmt);
+      W[k * 7 + 4].set(s.figure, s.ply || 0, s.sharp, s.limed); W[k * 7 + 5].set(st.r, st.g, st.b, s.streakAmt);
       W[k * 7 + 6].set(s.rough, s.straight || 0, s.pore_d || 0.1, s.ray_h || 0.6);
     };
     pack(S.species, 0); pack(S.insert, 1);
     const F = FINISHES[S.finish];
     U.uFinish.value.set(F.darken, F.sat, F.rough, F.coat); U.uFinishCoatRough.value = F.coatRough;
-    U.uMode.value = { none: 0, epoxy: 1, inlay: 2, reverse: 3, char: 4 }[S.fill];
+    U.uMode.value = { none: 0, epoxy: 1, inlay: 2, reverse: 3, char: 4, paint: 5 }[S.fill];
     U.uSanded.value = !!S.sanded;
-    const P = S.fillPreset === 'custom' ? customFill(S.customColor, +S.customType) : FILLS[S.fillPreset];
+    const P = S.fill === 'paint' ? (S.paint === 'custom' ? { type: 0, color: S.paintColor, rough: 0.55 } : PAINTS[S.paint])
+      : S.fillPreset === 'custom' ? customFill(S.customColor, +S.customType) : FILLS[S.fillPreset];
     U.uFillType.value = P.type; U.uFillColor.value.set(P.color); U.uFillRough.value = P.rough;
     const ab = P.absorb || [1, 1, 1]; U.uFillAbsorb.value.set(ab[0], ab[1], ab[2]);
     U.uFillScatter.value.set(P.scatter || '#000000');
