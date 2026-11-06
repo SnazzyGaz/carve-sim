@@ -8,6 +8,8 @@ export const SPECIES = {
   beech:    { group: 'Pale', name: 'Beech', early: '#e3c39b', late: '#d0aa7d', pore: '#bd9566', streak: '#d8b48a', spacing: 3.0, contrast: 0.25, sharp: 2.5, pore_amt: 0.12, pore_len: 0.8, ring_porous: 0.0, rays: 0.9, ribbon: 0.0, warp: 0.5, figure: 0.05, streakAmt: 0.1, limed: 0.0, rough: 0.5, pore_d: 0.06, ray_h: 2.5 },
   ash:      { group: 'Pale', name: 'Ash', early: '#e9d8b8', late: '#bfa173', pore: '#8f7452', streak: '#cdb48a', spacing: 4.6, contrast: 0.55, sharp: 4.0, pore_amt: 0.55, pore_len: 1.3, ring_porous: 1.0, rays: 0.25, ribbon: 0.0, warp: 0.8, figure: 0.08, streakAmt: 0.08, limed: 0.0, rough: 0.55, pore_d: 0.24, ray_h: 0.6 },
   pine:     { group: 'Pale', name: 'Pine', early: '#e9d09f', late: '#c48b4c', pore: '#b98447', streak: '#d9a867', spacing: 5.5, contrast: 0.75, sharp: 5.0, pore_amt: 0.0, pore_len: 1.0, ring_porous: 0.0, rays: 0.05, ribbon: 0.0, warp: 1.1, figure: 0.0, streakAmt: 0.12, limed: 0.0, rough: 0.6, pore_d: 0.02, ray_h: 0.5 },
+  // birch plywood: rotary-cut birch face (soft, wide figure) over cross-banded plies 1.4 mm thick; ply = ply thickness mm
+  birch_ply:{ group: 'Pale', name: 'Birch ply', early: '#ead9bb', late: '#dcc6a0', pore: '#cdb48c', streak: '#e2cfad', spacing: 3.0, contrast: 0.22, sharp: 2.2, pore_amt: 0.06, pore_len: 1.0, ring_porous: 0.0, rays: 0.15, ribbon: 0.0, warp: 1.6, figure: 0.12, streakAmt: 0.05, limed: 0.0, rough: 0.55, pore_d: 0.05, ray_h: 0.6, ply: 1.4 },
   limed_oak:{ group: 'Pale', name: 'Limed oak', early: '#d9c9ae', late: '#b29a7a', pore: '#f4f1ea', streak: '#cbb796', spacing: 3.6, contrast: 0.8, sharp: 3.5, pore_amt: 0.85, pore_len: 1.6, ring_porous: 1.0, rays: 0.6, ribbon: 0.0, warp: 0.75, figure: 0.08, streakAmt: 0.1, limed: 1.0, rough: 0.6, pore_d: 0.26, ray_h: 14 },
   // mid
   white_oak:{ group: 'Mid', name: 'White oak', early: '#cdae7f', late: '#9d7b51', pore: '#5f462b', streak: '#bf9d6c', spacing: 3.6, contrast: 0.62, sharp: 3.5, pore_amt: 0.65, pore_len: 1.6, ring_porous: 1.0, rays: 0.9, ribbon: 0.0, warp: 0.75, figure: 0.03, streakAmt: 0.05, limed: 0.0, rough: 0.56, pore_d: 0.26, ray_h: 14 },
@@ -60,6 +62,18 @@ export const LIGHTS = {
   raking:   { name: 'Raking',   az: 250, el: 14, key: 3.4, env: 0.32, warm: 0.3,  fill: 0.35, exp: 1.2, ao: 0.3 },
   overhead: { name: 'Overhead', az: 180, el: 70, key: 1.45, env: 0.55, warm: 0.0,  fill: 0.5,  exp: 1.0, ao: 0.2 },
   daylight: { name: 'Daylight', az: 300, el: 40, key: 2.2, env: 0.45, warm: -0.4, fill: 0.4,  exp: 1.0, ao: 0.25 },
+};
+
+// Paint sprayed into the carve with the face masked (or sanded back after), so only the walls and floor are coloured.
+// type 0 flat (satin), 1 metallic; f0 for metallic as in FILLS.
+export const PAINTS = {
+  black:  { name: 'Black',  type: 0, color: '#141414', rough: 0.55 },
+  white:  { name: 'White',  type: 0, color: '#ecebe6', rough: 0.55 },
+  navy:   { name: 'Navy',   type: 0, color: '#1c2a48', rough: 0.55 },
+  red:    { name: 'Red',    type: 0, color: '#8c1c1a', rough: 0.55 },
+  green:  { name: 'Green',  type: 0, color: '#22412d', rough: 0.55 },
+  gold:   { name: 'Gold',   type: 1, color: '#6e531f', rough: 0.42, f0: '#e0b964' },
+  silver: { name: 'Silver', type: 1, color: '#55585c', rough: 0.4, f0: '#c9ccd0' },
 };
 
 // A resin in any colour, shown as one of the three resin types. Derived the way the presets above are set:

@@ -106,6 +106,26 @@
       <div class="row"><label>Finish</label><div class="seg small inline" id="finish"></div></div>
     </section>
     <section class="card">
+      <h3>Fill</h3>
+      <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="paint" title="Paint sprayed into the carve, face masked or sanded back">Paint</button><button data-v="epoxy">Epoxy</button><button data-v="inlay" title="Wood inlay: the carve is filled with another wood">Inlay</button><button data-v="reverse" title="Reverse inlay: the design stays board wood, the background around it is the other wood">Reverse</button></div>
+      <div id="fillPaint" class="sub hidden"><div class="chips resin" id="paints"></div>
+        <div class="grp">Your colour</div>
+        <div class="custom" id="paintCustom" title="Pick any paint colour"><label class="pick"><input type="color" id="paintColor" value="#2a4a7a"><span id="paintSw"></span></label></div></div>
+      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
+        <div class="grp">Your colour</div>
+        <div class="custom" id="custom" title="Pick any colour: it shows as that resin type">
+          <label class="pick"><input type="color" id="customColor" value="#b5452c"><span id="customSw"></span></label>
+          <div class="seg small inline" id="customType"><button data-v="0" class="on">Opaque</button><button data-v="1">Metallic</button><button data-v="2">Tinted</button></div>
+        </div></div>
+      <div id="fillInlay" class="sub hidden"><div class="sublabel" id="inlayLabel">Inlay species (fills the carve)</div><div class="chips wood" id="inserts"></div><div class="warn hidden" id="inlaySame">Same wood as the board, so the carve will barely show. Pick a contrasting inlay.</div></div>
+      <div class="row" id="sandRow"><label title="Off shows the fill as poured or glued, before the face is sanded">Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
+      <div id="pourCtl" class="sub hidden">
+        <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat)"></div>
+        <div class="row"><label title="Above flush the resin spreads over the board as a thin level coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
+        <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the walls"></div>
+      </div>
+    </section>
+    <section class="card">
       <h3>Light</h3>
       <div class="seg" id="lightPreset"></div>
       <div class="slider" data-k="az" data-min="0" data-max="360" data-step="1" data-v="220" data-u="°" data-label="Direction" data-scope="view"></div>
@@ -113,23 +133,6 @@
       <div class="row"><label>Shadows</label><input type="checkbox" class="tog" id="shadows" checked></div>
       <div class="row"><label>Backdrop</label><div class="seg small inline" id="backdrop"><button data-v="dark" class="on">Dark</button><button data-v="light">Light</button></div></div>
       <div class="row"><label title="Fast suits older laptops and integrated graphics. Detail adapts to zoom either way">Detail</label><div class="seg small inline" id="meshRes"><button data-v="512">Fast</button><button data-v="1024" class="on">Fine</button><button data-v="2048">Max</button></div></div>
-    </section>
-    <section class="card">
-      <h3>Fill</h3>
-      <div class="seg" id="fill"><button data-v="none" class="on">None</button><button data-v="epoxy">Epoxy</button><button data-v="inlay">Wood inlay</button></div>
-      <div id="fillEpoxy" class="sub hidden"><div class="chips resin" id="resins"></div>
-        <div class="grp">Your colour</div>
-        <div class="custom" id="custom" title="Pick any colour: it shows as that resin type">
-          <label class="pick"><input type="color" id="customColor" value="#b5452c"><span id="customSw"></span></label>
-          <div class="seg small inline" id="customType"><button data-v="0" class="on">Opaque</button><button data-v="1">Metallic</button><button data-v="2">Tinted</button></div>
-        </div></div>
-      <div id="fillInlay" class="sub hidden"><div class="sublabel">Inlay species (fills the carve)</div><div class="chips wood" id="inserts"></div><div class="warn hidden" id="inlaySame">Same wood as the board, so the carve will barely show. Pick a contrasting inlay.</div></div>
-      <div class="row" id="sandRow"><label title="Off shows the fill as poured or glued, before the face is sanded">Sanded flush</label><input type="checkbox" class="tog" id="sanded" checked></div>
-      <div id="pourCtl" class="sub hidden">
-        <div class="slider" data-k="fillLevel" data-min="-2" data-max="1.5" data-step="0.05" data-v="0" data-u="mm" data-label="Pour level" data-scope="view" title="Resin level against the board top: below 0 under-filled, 0 flush, above 0 overpour (needs Flood coat)"></div>
-        <div class="row"><label title="Above flush the resin spreads over the board as a thin level coat">Flood coat</label><input type="checkbox" class="tog" id="flood"></div>
-        <div class="slider" data-k="menisc" data-min="0" data-max="1" data-step="0.01" data-v="0.3" data-pct="1" data-label="Shrinkage" data-scope="view" title="Curing shrinkage dishes the middle of each pour; a small meniscus climbs the walls"></div>
-      </div>
     </section>
     <section class="card" id="cardJob">
       <h3>Job</h3>

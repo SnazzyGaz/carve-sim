@@ -212,6 +212,10 @@ vec4 W(int k,int i){ return uWood[k*7+i]; }
 // geometry cut by the surface, so a shallow cut through a tube reads as a dash and end grain reads as dots and lines.
 vec3 wood(vec3 p, int k, out float rough){
   vec4 c0=W(k,0), c1=W(k,1), c2=W(k,2), c3=W(k,3), c4=W(k,4), c5=W(k,5), c6=W(k,6);
+  // plywood: plies of c4.y mm, each its own veneer with the grain turned 90 degrees from the one above
+  float plyT = c4.y, plyI = 0.0;
+  if (plyT > 0.0) { plyI = floor(max(-p.y, 0.0) / plyT); if (mod(plyI, 2.0) > 0.5) p.xz = p.zx; p += vec3(plyI * 47.0, 0.0, plyI * 29.0); }
+  vec3 p0 = p;
   p += vec3(float(k)*173.0, 0.0, float(k)*61.0);
   float spacing=c0.w, contrast=c1.w, poreAmt=c2.w, ringPorous=c3.x, rays=c3.y, ribbon=c3.z, warp=c3.w;
   float figure=c4.x, sharp=c4.z, limed=c4.w, streakAmt=c5.w, baseRough=c6.x;
@@ -301,6 +305,13 @@ vec3 wood(vec3 p, int k, out float rough){
   float fib = snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
   col *= 1.0 + fib*0.022;
 #endif
+  if (plyT > 0.0){
+    // each ply peeled from a different log: a little lighter or darker; dark glue lines between plies
+    col *= mix(0.9, 1.05, hash1(vec2(plyI, 3.0)));
+    float yy = max(-p0.y, 0.0), gpx = length(vec2(dFdx(p0.y), dFdy(p0.y))) + 1e-4;
+    float gl = lineCover(yy - plyT * floor(yy / plyT + 0.5), 0.09, gpx) * step(0.5 * plyT, yy + 0.5 * gpx);
+    col = mix(col, vec3(0.42, 0.33, 0.22), gl * 0.85);
+  }
   // open pores scatter (rougher), ray tissue is dense and smooth (the silver-grain sheen)
   rough = baseRough + pores*0.18*(1.0 - limed) - ray*0.18 + ribbon*0.06*rib;
   return max(col, vec3(0.0));
@@ -561,6 +572,14 @@ void surfaceBody(){
     sRough = mix(rTop, min(rTop + 0.10 + 0.15*clamp(endg*1.6,0.0,1.0), 1.0), cov);
     sCoat = mix(uFinish.w, uFinish.w*0.5, cov);
     sAO = aoAt(uv);
+    if (uMode == 5){
+      // painted carve, face masked: walls and floor take the paint (satin, or metallic paint), the top stays wood
+      vec3 pc = uFillType == 1 ? uFillF0 : uFillColor;
+      sAlb = mix(woodTop, pc, cov);
+      sRough = mix(rTop, uFillRough, cov);
+      sMetal = uFillType == 1 ? 0.85 * cov : 0.0;
+      sCoat = mix(uFinish.w, 0.2, cov);
+    }
     return;
   }
   if (uMode == 4){
