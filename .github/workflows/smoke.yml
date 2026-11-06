@@ -1,0 +1,18 @@
+# Loads every sample and every tests/fixtures SVG in headless Chromium; fails on page errors or a wrong carve.
+name: Smoke test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - run: (cd app && python -m http.server 8766 >/dev/null 2>&1 &) && sleep 2 && python tools/smoke.py
