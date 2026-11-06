@@ -32,7 +32,7 @@ async def main():
         logs = []; pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}')); pg.on('pageerror', lambda e: logs.append(f'PAGEERROR {e}'))
         await pg.goto(BASE); await pg.wait_for_function('window.app && window.app.viewer')
         await pg.evaluate(f'app.loadPath({json.dumps(ART)})')
-        await pg.wait_for_function('app.traced !== null && !!app.traced.stats', timeout=400000); await pg.evaluate('app.ready()')
+        await pg.wait_for_function('app.job || (app.traced && app.traced.stats)', timeout=400000); await pg.evaluate('app.ready()')
         await pg.evaluate("app.set({view:'angle', light:{light:'studio'}, material:{species:'white_oak', finish:'oil', fill:'none', sanded:true}})")
         await pg.evaluate(HOOK)
         async def idle(ms=900):

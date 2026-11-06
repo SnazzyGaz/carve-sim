@@ -82,7 +82,7 @@ seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', view
   let html = '', grp = '';
   for (const [k, f] of Object.entries(FILLS)) {
     if (f.group !== grp) { grp = f.group; html += `<div class="grp">${grp}</div>`; }
-    const bg = f.type === 1 ? `linear-gradient(135deg, ${f.color}, #fff8 45%, ${f.color} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
+    const bg = f.type === 1 ? `linear-gradient(135deg, ${f.f0}, #fff8 45%, ${f.f0} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
     html += `<button data-v="${k}"><span class="sw" style="background:${bg}"></span>${f.name}</button>`;
   }
   $('#resins').innerHTML = html;
@@ -90,7 +90,7 @@ seg('#finish', (v) => viewer.setMaterial({ finish: v })); segSet('#finish', view
   segSet('#resins', viewer.state.fillPreset);
 }
 // your own colour: the picker or the type switch selects the custom resin; the presets above stay as suggestions
-const resinSw = (f) => f.type === 1 ? `linear-gradient(135deg, ${f.color}, #fff8 45%, ${f.color} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
+const resinSw = (f) => f.type === 1 ? `linear-gradient(135deg, ${f.f0}, #fff8 45%, ${f.f0} 60%, #0006)` : f.type === 2 ? `linear-gradient(135deg, ${f.color}cc, ${f.scatter})` : f.color;
 function customUI() {
   const S = viewer.state; $('#customColor').value = S.customColor; segSet('#customType', String(S.customType));
   $('#customSw').style.background = resinSw(customFill(S.customColor, +S.customType));
@@ -196,7 +196,10 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   try { doc = await parseSvg(text, name); }
   catch (e) { console.warn(e); showError('Could not open that file', (e.message || 'It is not a readable SVG.') + ' The board you had is still loaded.'); return; }
   doc.t0 = t0; doc.parse_ms = Math.round(performance.now() - t0); doc.from = from;
-  if (!doc.layers.some((l) => l.kind !== 'profile' && l.items.length) && !doc.generic) { showError('No carvable shapes in that SVG', NO_SHAPES); return; }
+  if (!doc.layers.some((l) => l.kind !== 'profile' && l.items.length) && !doc.generic) {
+    if (doc.hasProfile) showError('Outline only: nothing to carve', OUTLINE_ONLY); else showError('No carvable shapes in that SVG', NO_SHAPES);
+    return;
+  }
   doc.prev = { doc: app.doc, job: app.job, file: $('#fileName').textContent, settings: { ...settings }, src: { ...carveSrc } };
   app.doc = doc; app.job = null;
   // everything about the carve comes from the file, else a fixed default (never a value left over from the last file)
@@ -220,6 +223,7 @@ async function loadSvgText(text, name = 'artwork.svg', from = null) {
   return requestBake();
 }
 const NO_SHAPES = 'Nothing in it would be cut: paths need a fill or a stroke. The board you had is still loaded.';
+const OUTLINE_ONLY = 'This is a profile (cut-out) file: it holds the line the board is cut free on, but nothing carved inside it, so there is no carving to show. Trace the art as a V-carve or pocket to preview it. The board you had is still loaded.';
 // a failed or empty import puts the last good board back (file name, carve settings, Job) instead of a blank one
 function restorePrev(doc) {
   const P = doc.prev; if (!P || app.doc !== doc) return;
@@ -289,7 +293,6 @@ async function bake() {
     const job = { name: doc.name, stats: r.stats, bake_ms: Math.round(tw0 - tb), worker_ms: r.stats.timing_ms, parse_ms: doc.parse_ms, raster_ms: doc.raster_ms || 0,
       settings: { ...settings }, kinds: effKinds(), layers: doc.layers.map((l) => ({ name: l.name, kind: l.kind, shapes: l.items.length })) };
     app.job = job;
-    app.traced = { stats: { paths: doc.nShapes, nodes: null, estimate: { time_min: null } }, params: { ...settings } };   // older test tools wait on this
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
     job.first_frame_ms = Math.round(performance.now() - (doc.firstDone ? tb : doc.t0)); job.from_import = !doc.firstDone; doc.firstDone = true;
     showStats(job, doc);

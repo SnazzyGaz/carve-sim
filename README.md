@@ -61,7 +61,9 @@ Serve the `app/` folder with any static server, then open the page:
 cd app && python3 -m http.server 8766    # http://127.0.0.1:8766/
 ```
 
-It won't work from a double-clicked `file://`. GitHub Pages publishes `app/` as is, with no build step.
+It won't work from a double-clicked `file://`. There is no build step: `app/` is the site.
+
+**Tests and publishing:** `python3 tools/smoke.py` (with the server above running; needs `pip install playwright && playwright install chromium`) loads every sample and every SVG in `tests/fixtures/` headless and checks each carve. GitHub Actions runs it on every push; when it passes on `main`, `pages.yml` copies `app/` to the `gh-pages` branch, which is what the website serves. Bump the cache name in `app/sw.js` when you change a sample or vendor file, or returning visitors keep the old copy.
 
 ## Desktop apps
 

@@ -126,7 +126,7 @@ async def main():
         await pg.evaluate(f'app.loadPath({json.dumps(ART)})')
         await pg.wait_for_function('(t0) => app.viewer.depth && window.__frames.some(f => f.t >= t0 && f.calls > 1)', arg=t0, timeout=300000, polling=50)
         first = await pg.evaluate('(t0) => { const f = window.__frames.find(f => f.t >= t0 && f.calls > 1); return f.t + f.ms - t0; }', t0)
-        await pg.wait_for_function('app.traced !== null && !!app.traced.stats', timeout=300000)
+        await pg.wait_for_function('app.job || (app.traced && app.traced.stats)', timeout=300000)   # app.traced: builds before the showroom
         await pg.evaluate('app.ready()')
         await wait_idle(pg)
         t_tr = await pg.evaluate('(t0) => { const f = window.__frames; return f[f.length-1].t + f[f.length-1].ms - t0; }', t0)
@@ -134,7 +134,7 @@ async def main():
         R['cold_open_to_traced_3d_s'] = round(t_tr / 1000, 2)
         save('cold_open_to_traced_3d_s')
         R['bytes_total_MB'] = round(bytes_in['n'] / 1e6, 2)
-        R['trace'] = await pg.evaluate('({paths: app.traced.stats.paths, nodes: app.traced.stats.nodes, min: app.traced.stats.estimate.time_min})')
+        R['trace'] = await pg.evaluate('app.job ? {paths: app.doc.nShapes} : {paths: app.traced.stats.paths, nodes: app.traced.stats.nodes, min: app.traced.stats.estimate.time_min}')
         lt = await pg.evaluate('(t0) => window.__long.filter(l => l[0] >= t0)', t0)
         R['load_longtasks'] = {'count': len(lt), 'total_ms': round(sum(l[1] for l in lt)), 'max_ms': round(max([l[1] for l in lt] or [0]))}
         save('load_longtasks')

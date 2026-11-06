@@ -19,7 +19,7 @@ async def main(art, outdir, shots, w=1600, h=1000):
         await pg.wait_for_function('window.app && window.app.viewer')
         t = time.time()
         await pg.evaluate(f'app.loadPath({json.dumps(art)})')
-        await pg.wait_for_function('app.traced !== null', timeout=180000)
+        await pg.wait_for_function('!!app.job', timeout=180000)
         await pg.evaluate('app.ready()')
         print('loaded+traced in', round(time.time() - t, 1), 's', flush=True)
         for s in shots:
@@ -39,7 +39,7 @@ async def main(art, outdir, shots, w=1600, h=1000):
             if s.get('tab'):
                 await pg.click('.tabs>button[data-tab="3d"]')
             print('shot', path, flush=True)
-        res = await pg.evaluate('app.traced && app.traced.stats')
+        res = await pg.evaluate('app.job && app.job.stats')
         print(json.dumps(res))
         seen = set()
         for l in logs:
