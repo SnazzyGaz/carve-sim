@@ -335,12 +335,35 @@ export class Viewer {
   }
   bakePending() { return !!(this.bakeJobs[0] || this.bakeJobs[1]); }
 
+  // The floor is a studio sweep: unlit colour with a soft pool of light under the board (so it never reads as a black
+  // void or a hard-edged plane), the key's shadow laid over it at partial strength (a shadow on a lit table is never
+  // black), and a contact shadow: a blurred dark footprint right under the board that seats it on the surface.
   makeBackdrop() {
     const g = new THREE.PlaneGeometry(6000, 6000);
-    this.floorMat = new THREE.MeshStandardMaterial({ color: 0x2b2927, roughness: 0.92, metalness: 0 });
+    const pool = document.createElement('canvas'); pool.width = pool.height = 256;
+    const cx = pool.getContext('2d'), gr = cx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    gr.addColorStop(0, '#fff'); gr.addColorStop(0.35, '#c8c8c8'); gr.addColorStop(1, '#5a5a5a');
+    cx.fillStyle = gr; cx.fillRect(0, 0, 256, 256);
+    const poolTex = new THREE.Texture(pool); poolTex.needsUpdate = true; poolTex.colorSpace = THREE.SRGBColorSpace;
+    this.floorMat = new THREE.MeshBasicMaterial({ color: 0x2b2927, map: poolTex, fog: true });
     this.floor = new THREE.Mesh(g, this.floorMat);
-    this.floor.rotation.x = -Math.PI / 2; this.floor.receiveShadow = true;
-    this.scene.add(this.floor);
+    this.floor.rotation.x = -Math.PI / 2; this.floor.renderOrder = -2;
+    poolTex.repeat.set(1, 1); poolTex.offset.set(0, 0);
+    this.floorShadow = new THREE.Mesh(g, new THREE.ShadowMaterial({ opacity: 0.5 }));
+    this.floorShadow.rotation.x = -Math.PI / 2; this.floorShadow.position.y = 0.05; this.floorShadow.receiveShadow = true; this.floorShadow.renderOrder = -1;
+    const cs = document.createElement('canvas'); cs.width = cs.height = 256;
+    const c2 = cs.getContext('2d'); c2.filter = 'blur(14px)'; c2.fillStyle = '#000'; c2.fillRect(40, 40, 176, 176);
+    const csTex = new THREE.Texture(cs); csTex.needsUpdate = true;
+    this.contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: csTex, transparent: true, opacity: 0.55, depthWrite: false }));
+    this.contact.rotation.x = -Math.PI / 2; this.contact.position.y = 0.1; this.contact.renderOrder = -1;
+    this.scene.add(this.floor, this.floorShadow, this.contact);
+  }
+  // the light pool and the contact shadow follow the board's size
+  placeFloor(w, h) {
+    const t = this.floorMat.map, span = 6000, R = Math.max(w, h) * 2.6;
+    t.repeat.set(span / R, span / R); t.offset.set(0.5 - span / R / 2, 0.5 - span / R / 2);
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true;
+    this.contact.scale.set(w * 256 / 176 * 1.02, h * 256 / 176 * 1.02, 1);
   }
 
   makeBoard() {
@@ -438,7 +461,7 @@ export class Viewer {
     const S = this.state, m = S.margin, T = S.thickness;
     this.group.position.set(-D.artW / 2, T, -D.artH / 2); // board origin at art top-left; board sits on the floor
     this.uniforms.uOrigin.value.copy(this.group.position);
-    this.floor.position.y = 0;
+    this.floor.position.y = 0; this.placeFloor(D.artW + 2 * m, D.artH + 2 * m);
     const flushFill = S.sanded && ['epoxy', 'inlay', 'reverse'].includes(S.fill);
     const step = this.lodStep(D); this.lodSt = step;
     const x0 = -m, z0 = -m, x1 = D.artW + m, z1 = D.artH + m;
@@ -577,7 +600,8 @@ export class Viewer {
     const bg = dark ? 0x141312 : 0xd9d6d0;
     if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 900, 2600); }
     this.scene.background.set(bg); this.scene.fog.color.set(bg);
-    this.floorMat.color.set(dark ? 0x23211f : 0xbdb8b0);
+    this.floorMat.color.set(dark ? 0x2e2b28 : 0xd8d4cd);
+    this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = dark ? 0.6 : 0.42;
     // only a light that moved needs a new shadow map / environment; brightness, ambient, AO and exposure are uniforms
     const at = S.az + ',' + S.el;
     if (at !== this._lightAt) { this._lightAt = at; this.placeLight(); }
@@ -624,6 +648,14 @@ export class Viewer {
     this.envKey = panel(...ENV.key); this.envStrip = panel(...ENV.strip); this.envFront = panel(...ENV.front);
     for (let i = 0; i < 4; i++) { const m = panel(96, 14, ENV.band[0], ENV.band[1]); const a = i * Math.PI / 2; m.position.set(Math.sin(a) * 47, 3, Math.cos(a) * 47); m.lookAt(0, 3, 0); }
     this.envFloor = panel(100, 100, '#2a2622', 1.0); this.envFloor.rotation.x = -Math.PI / 2; this.envFloor.position.y = -12;
+    // a dim warm ceiling and a mullioned window on one wall: glossy finishes, resin and metal reflect a room with some
+    // structure instead of one soft blob on black
+    const ceil = panel(80, 80, '#4a443d', 1.0); ceil.rotation.x = Math.PI / 2; ceil.position.y = 46;
+    this.envWin = new THREE.Group(); sc.add(this.envWin);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 9), new THREE.MeshBasicMaterial({ color: new THREE.Color('#e4ecf6').multiplyScalar(2.2), side: THREE.DoubleSide }));
+      m.position.set((i - 1) * 7.2, (j - 0.5) * 9.6, 0); this.envWin.add(m);
+    }
   }
   buildEnv(force = false) {
     const S = this.state, key = S.az.toFixed(1) + ',' + S.el.toFixed(1);
@@ -633,6 +665,7 @@ export class Viewer {
     const az = THREE.MathUtils.degToRad(S.az), el = THREE.MathUtils.degToRad(S.el);
     const put = (m, a, e, d) => { m.position.set(Math.cos(e) * Math.sin(a) * d, Math.sin(e) * d, Math.cos(e) * Math.cos(a) * d); m.lookAt(0, 0, 0); };
     put(this.envKey, az, Math.max(el, 0.45), 44); put(this.envStrip, az + Math.PI * 0.85, 0.35, 44); put(this.envFront, az + Math.PI, 1.0, 44);
+    put(this.envWin, az - Math.PI * 0.55, 0.42, 47);
     const rt = this.pmrem.fromScene(this.envScene, 0.02);
     this.scene.environment = rt.texture; if (this.envRT) this.envRT.dispose(); this.envRT = rt;
     this.dirty = true;

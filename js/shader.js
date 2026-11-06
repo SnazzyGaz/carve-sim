@@ -220,10 +220,13 @@ vec3 wood(vec3 p, int k, out float rough){
   float w1 = snoise(vec3(p.x*0.0035, p.z*0.010, p.y*0.010));
   float w2 = snoise(vec3(p.x*0.004+5.2, p.z*0.035, p.y*0.035));
   float w3 = snoise(vec3(p.x*0.012+1.7, p.z*0.12, p.y*0.12));
-  float vc = 150.0 + straight*520.0 + p.x*0.06*(1.0-straight) + w1*warp*22.0;
-  float yc = -260.0 + p.x*0.10 + w1*warp*10.0;
+  // pith ~330 mm under the board and off to one side: one cathedral crown toward an edge, straighter stripes elsewhere (a
+  // centred, shallow pith made the whole top a field of contour-map loops). The ring wobble is kept small: on a face almost
+  // tangent to the rings, a fraction of a mm of wobble already swings the ring lines tens of mm sideways.
+  float vc = 70.0 + straight*600.0 + p.x*0.05*(1.0-straight) + w1*warp*18.0;
+  float yc = -330.0 + p.x*0.08 + w1*warp*8.0;
   vec2 q = vec2(p.z - vc, p.y - yc);
-  float r = length(q) + w2*warp*1.3 + w3*0.18*warp;
+  float r = length(q) + w2*warp*0.55 + w3*0.07*warp;
   float ang = atan(q.x, q.y);                        // around the pith, 0 = straight up through the board
   // uneven ring widths (good and bad growth years) + a slow wobble along the length
   float wob = snoise(vec3(p.x*0.018, r*0.22, 3.3));
@@ -290,13 +293,13 @@ vec3 wood(vec3 p, int k, out float rough){
     col = mix(col, c1.rgb * vec3(0.86, 0.80, 0.74), clamp(ray, 0.0, 1.0) * 0.75);
   }
   // interlocked ribbon (padauk): alternating light/dark bands that also change sheen
-  float rib = sin(p.z*0.42 + w1*5.0 + w2*2.0);
-  col *= 1.0 + ribbon*0.075*rib;
+  float rib = sin(p.z*0.42 + w1*5.0 + w2*2.0 + 2.5*snoise(vec3(p.x*0.004, p.z*0.03, 6.0))) * (0.6 + 0.4*snoise(vec3(p.x*0.01, p.z*0.02, 8.0)));
+  col *= 1.0 + ribbon*0.045*rib;
   // limed: white paste in the open grain (pore colour) + a whitewash over everything
   col = mix(col, vec3(0.86,0.84,0.80), limed*0.16);
 #ifndef CARVE_BAKE
   float fib = snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
-  col *= 1.0 + fib*0.035;
+  col *= 1.0 + fib*0.022;
 #endif
   // open pores scatter (rougher), ray tissue is dense and smooth (the silver-grain sheen)
   rough = baseRough + pores*0.18*(1.0 - limed) - ray*0.18 + ribbon*0.06*rib;
@@ -308,7 +311,7 @@ vec3 wood(vec3 p, int k, out float rough){
 float fibre(vec3 p, int k){
   p += vec3(float(k)*173.0, 0.0, float(k)*61.0);
   float fwz = length(vec2(dFdx(p.z),dFdy(p.z))) + length(vec2(dFdx(p.y),dFdy(p.y)))*0.5 + 1e-5;
-  return 1.0 + 0.035 * snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
+  return 1.0 + 0.022 * snoise(vec3(p.x*0.35, p.z*9.0, p.y*9.0)) * aaFade(fwz, 9.0);
 }
 const float BAKE_SCALE = 1.0/0.75;
 vec4 bakeA(vec2 xz){ vec4 t = texture2D(uBakeA, (xz - uBakeRect.xy) / uBakeRect.zw); return vec4(t.rgb*BAKE_SCALE, t.a); }
@@ -330,7 +333,10 @@ vec3 carveNormalT(vec2 uv, vec4 t){
   float fw = max(sFw, 1e-4);
   float band = bandIn(t.r, 0.0, t.b / max(t.a, 1e-4), fw);
   vec2 g = vec2(0.0);
-  if (band > 0.0) g = gradS(uv) * (t.a * band);   // most of the board (top, floors) is flat: no gradient taps there
+  // most of the board (top, floors) is flat: no gradient taps there. On a wall the SDF gradient has unit length, but the
+  // finite difference shrinks within a texel of the medial axis, which rounded the bottom of every thin V into a trough;
+  // normalising it keeps a V-bit's walls planar right down to a crisp ridge.
+  if (band > 0.0) { vec2 gs = gradS(uv); float gl = length(gs); g = (gl > 1e-3 ? gs / gl : vec2(0.0)) * (t.a * band); }
   if (uStepD.x > 0.0){
     vec2 e = uTexel; vec4 c = stepsT(uv), w = vec4(1.0 / uStepK);
     vec4 on = uStepD * uStepK * vec4(bandIn(c.x, 0.0, w.x, fw), bandIn(c.y, 0.0, w.y, fw), bandIn(c.z, 0.0, w.z, fw), bandIn(c.w, 0.0, w.w, fw));
@@ -413,18 +419,23 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
       col = mix(col * mix(0.94, 1.03, vFbm(mq * 5.0)), uFillVeinCol, vein * 0.8);
     }
   } else if (uFillType == 1){
-    // metal powder in resin: platelets with their own tilt (glitter) under the resin's flat gloss coat. Once a flake is
-    // sub-pixel its tilt spread is folded into the roughness (no sparkle aliasing, same average highlight width).
-    vec2 fq = P.xz * 16.0; float fw = length(fwidth(fq));
+    // metal powder in resin: coarse platelets (~0.3 mm) with their own tilt, so some catch the light as glints, under the
+    // resin's flat gloss coat; once a flake is sub-pixel its tilt spread is folded into the roughness (no sparkle aliasing).
+    // The powder is uneven (a few-mm mottle and the pour's flow lines) and the binder between flakes is dark, so it reads
+    // as metal in resin, not as one flat sheet of yellow.
+    vec2 fq = P.xz * 6.0; float fw = length(fwidth(fq));
     vec2 hc = hash2(fq + 3.0), ht = hash2(fq + 71.0) - 0.5;
-    float fade = 1.0 - smoothstep(0.35, 1.1, fw);
-    vec3 fN = normalize(vec3(ht.x * 0.75, 1.0, ht.y * 0.75));
+    float fade = 1.0 - smoothstep(0.4, 1.3, fw);
+    vec3 fN = normalize(vec3(ht.x * 0.5, 1.0, ht.y * 0.5));
     sN = normalize(mix(vec3(0.0,1.0,0.0), fN, fade));
-    float r0 = uFillRough * 0.6;
-    sRough = sqrt(r0*r0 + (1.0 - fade) * 0.09);
+    float r0 = uFillRough * 0.55;
+    sRough = sqrt(r0*r0 + (1.0 - fade) * 0.12);
     sMetal = 0.9; sSpec = 1.0;
-    float sw = snoise(vec3(P.x*0.08, P.z*0.08, 1.0));            // flow lines in the pour
-    col = uFillF0 * (1.0 + 0.07*sw) * mix(1.0, 0.75 + 0.5*hc.x, fade);
+    vec2 fl = P.xz + 9.0 * vec2(snoise(vec3(P.xz * 0.02, 2.0)), snoise(vec3(P.xz * 0.02, 5.0)));   // swirled by the pour
+    float flow = 0.55 * snoise(vec3(fl.x*0.035, fl.y*0.07, 1.0)) + 0.45 * snoise(vec3(fl * 0.16, 4.0));
+    float dens = clamp(0.64 + 0.3*flow, 0.3, 1.0);                // powder density: flakes vs binder showing through
+    vec3 metal = uFillF0 * mix(1.0, 0.8 + 0.4*hc.x, fade);
+    col = mix(uFillColor * 0.35, metal, dens);
   } else {
     // clear / tinted / glow resin: look through it to the carved floor. Refract the view ray, march it to the floor,
     // light the floor with the key (refracted in, absorbed on the way down, Fresnel-weighted) and the environment
@@ -441,23 +452,54 @@ vec3 fillSurface(vec3 P, float thick, vec3 Vw){
     L = res / ty;
     vec3 fa = bakeA(hit).rgb;
     float la = dot(fa, vec3(0.2126,0.7152,0.0722));
-    vec3 floorA = max(mix(vec3(la), fa, 1.12) * 0.84, 0.0);      // wood under resin is wetted: darker, richer
+    vec3 floorA = max(mix(vec3(la), fa, 1.12) * 0.9, 0.0);       // wood under resin is wetted: darker, richer
     vec3 Lk = normalize(uKeyDir);
     vec3 Lr = refract(-Lk, vec3(0.0,1.0,0.0), 1.0/1.5);
     vec3 nF = carveNormal(hit/uArt);
-    vec3 Tl = exp(-uFillAbsorb * (res / max(-Lr.y, 0.2)) * 0.55);
-    vec3 Ta = exp(-uFillAbsorb * res * 1.3 * 0.55);
+    vec3 Tl = exp(-uFillAbsorb * (res / max(-Lr.y, 0.2)) * 0.36);
+    vec3 Ta = exp(-uFillAbsorb * res * 1.3 * 0.36);
     float eKey = max(dot(nF, -Lr), 0.0) * (1.0 - schlick(max(Lk.y, 0.0)));
     float eTop = max(Lk.y, 0.0);
     vec3 E = (uKeyShare * eKey * Tl + (1.0 - uKeyShare) * aoAt(hit/uArt) * Ta) / max(uKeyShare * eTop + (1.0 - uKeyShare), 1e-3);
-    vec3 tr = exp(-uFillAbsorb * L * 0.55);
+    vec3 tr = exp(-uFillAbsorb * L * 0.36);
     col = floorA * E * tr + uFillScatter * (1.0 - tr);
     sRough = 0.5;
   }
   return col;
 }
 
+// The board's edges are eased (a ~1.6 mm round-over), shaded rather than modelled: the top's normal tips outward over the
+// last 1.6 mm and the sides' normal tips up over their top 1.6 mm, meeting at 45 degrees, so the edge catches a highlight
+// line instead of being a razor corner.
+const float ROUND = 1.6;
+vec2 edgeOut(vec2 p, out float e){   // outward normal of the nearest board side, and the distance to it (mm)
+  vec4 R = uBoardRect; float a = p.x - R.x, b = R.x + R.z - p.x, c = p.y - R.y, dd = R.y + R.w - p.y;
+  e = min(min(a, b), min(c, dd));
+  return e == a ? vec2(-1.0, 0.0) : e == b ? vec2(1.0, 0.0) : e == c ? vec2(0.0, -1.0) : vec2(0.0, 1.0);
+}
+void surfaceBody();
 void surface(){
+  surfaceBody();
+#if CARVE_PART == 0
+  float e; vec2 o = edgeOut(vBoard.xz, e);
+  if (e < ROUND){
+    float th = (1.0 - e / ROUND) * 0.7854;
+    vec3 tip = vec3(o.x * sin(th), cos(th), o.y * sin(th));
+    sN = normalize(tip + (sN - vec3(0.0, 1.0, 0.0)));
+    if (dot(sNc, sNc) > 0.5) sNc = tip;
+  }
+#elif CARVE_PART == 1
+  vec3 gN = normalize(cross(dFdx(vBoard), dFdy(vBoard)));
+  if (abs(gN.y) < 0.5){                                   // a side, not the underside
+    float e; vec2 o = edgeOut(vBoard.xz, e);
+    float th = 1.5708 - clamp(1.0 + vBoard.y / ROUND, 0.0, 1.0) * 0.7854;
+    sN = vec3(o.x * sin(th), cos(th), o.y * sin(th)); sOverrideN = true;
+    // the board's ends (fibres run along x) are end grain: it drinks finish, so it is darker and duller
+    if (abs(o.x) > 0.5) { sAlb *= 0.78; sRough = min(sRough + 0.14, 1.0); sCoat *= 0.5; }
+  }
+#endif
+}
+void surfaceBody(){
   vec3 P = vBoard;
   vec2 uv = P.xz / uArt;
   vec4 tS = sdfT(uv);
@@ -510,6 +552,11 @@ void surface(){
     // (darker, rougher). Occlusion from the baked sky-visibility map (indirect light only).
     float endg = abs(nC.x) * (1.0 - nC.y);
     vec3 cut = woodTop * mix(0.94, 0.80, clamp(endg*1.6,0.0,1.0));
+    int kb = uMode==3 ? 1 : 0;
+    if (W(kb,1).w < 0.001 && W(kb,3).w < 0.001){   // MDF: the fibre core under the pressed skin is darker and fuzzy
+      float fz = 0.5 + 0.5 * snoise(vec3(P.x*2.2, d*2.2, P.z*2.2)) * aaFade(sFw, 2.2);
+      cut = woodTop * (0.66 + 0.1*fz); endg = 0.6;
+    }
     sAlb = mix(woodTop, cut, cov);
     sRough = mix(rTop, min(rTop + 0.10 + 0.15*clamp(endg*1.6,0.0,1.0), 1.0), cov);
     sCoat = mix(uFinish.w, uFinish.w*0.5, cov);
