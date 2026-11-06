@@ -70,7 +70,9 @@ export class Viewer {
     this.el = container;
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.fullPR = Math.min(window.devicePixelRatio || 1, 2);
-    this.draftPR = Math.min(window.devicePixelRatio || 1, 1);
+    // frames while moving start at full resolution; adapt() only lowers it if frames actually run slow, so on a capable GPU
+    // moving and settled frames are the same picture (the swap used to make the board, table and shadow jump)
+    this.draftPR = this.fullPR;
     r.setPixelRatio(this.fullPR);
     r.toneMapping = THREE.CustomToneMapping; r.toneMappingExposure = 1.0;
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap;
@@ -545,14 +547,22 @@ export class Viewer {
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state, hm = D.artH / 2 + S.margin, T = S.thickness;
     const sp = this.spin, P = S.pose;
     if (!this.wall) {
-      this.wallMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f2, roughness: 0.92, metalness: 0, envMapIntensity: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-      this.wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 4000), this.wallMat); this.wall.receiveShadow = true; this.scene.add(this.wall);
+      this.wallMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f2, roughness: 0.92, metalness: 0, envMapIntensity: 1.1, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      this.wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 4000), this.wallMat); this.scene.add(this.wall);
+      // the key's shadow is laid over the wall at partial strength (as on the floor): a shadow on a lit wall is never black
+      this.wallShadow = new THREE.Mesh(this.wall.geometry, new THREE.ShadowMaterial({ opacity: 0.38, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+      this.wallShadow.receiveShadow = true; this.wall.add(this.wallShadow);
+      // contact shadow on the wall behind a hung board (as under a flat one): it closes the lit sliver the shadow bias
+      // leaves at the joint, which read as a gap between board and wall
+      this.wallContact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.contact.material.clone());
+      Object.assign(this.wallContact.material, { opacity: 0.45 }); this.scene.add(this.wallContact);
     }
     if (P === 'wall') {
       // hung: face forward (+z), board back on the wall at z = 0, centred at eye height
       sp.rotation.x = Math.PI / 2; sp.position.set(0, 0, -T);   // the face at z = 0, the back flat on the wall
       this.groundY = -hm - 700; this.boardC = new THREE.Vector3(0, 0, 0);   // the face centre
-      this.wall.position.set(0, 0, -T);
+      this.wall.position.set(0, 0, -T + 0.5);   // the board sits 0.5 mm into the plaster: no sliver of light at the joint
+      this.wallContact.position.set(0, 0, -T + 0.6); this.wallContact.scale.set((D.artW + 2 * S.margin) * 256 / 176 * 1.02, 2 * hm * 256 / 176 * 1.02, 1);
     } else if (P === 'lean') {
       // leaning back ~15 degrees: the back bottom edge on the table, the top back edge against the wall
       const th = Math.PI / 2 - 0.26, c = Math.cos(th), sn = Math.sin(th);
@@ -563,20 +573,25 @@ export class Viewer {
     } else {
       sp.rotation.x = 0; sp.position.set(0, 0, 0); this.groundY = 0; this.boardC = new THREE.Vector3(0, T, 0);
     }
-    this.wall.visible = P !== 'flat';
+    this.wall.visible = P !== 'flat'; this.wallContact.visible = P === 'wall';
     const onTable = P !== 'wall';
     this.floor.visible = onTable; if (this.floorShadow) this.floorShadow.visible = onTable && !SURFACE[S.backdrop];
     for (const [k, m] of Object.entries(this.surfaces || {})) m.visible = onTable && SURFACE[S.backdrop] === k;
     this.contact.visible = P === 'flat';
     const C = this.controls;
-    C.maxPolarAngle = P === 'wall' ? Math.PI * 0.64 : Math.PI * (P === 'lean' ? 0.46 : 0.47);
-    C.minAzimuthAngle = P === 'flat' ? -Infinity : -1.3; C.maxAzimuthAngle = P === 'flat' ? Infinity : 1.3;
+    // against a wall the camera stays in front of it: within 60 degrees of straight-on sideways, and for the hung board
+    // within ~35 degrees above or below its centre (further round, the wall and board are seen edge-on and look pierced)
+    C.minPolarAngle = P === 'wall' ? Math.PI * 0.3 : 0;
+    C.maxPolarAngle = P === 'wall' ? Math.PI * 0.68 : Math.PI * (P === 'lean' ? 0.46 : 0.47);
+    C.minAzimuthAngle = P === 'flat' ? -Infinity : -1.05; C.maxAzimuthAngle = P === 'flat' ? Infinity : 1.05;
     this.wallZ = P === 'flat' ? null : this.wall.position.z;
     if (P !== 'flat' && S.sway) this.setSway(false);
     this.spin.updateMatrixWorld(true); this.shadowDirty = true; this.dirty = true;
   }
   applyGrids() {
-    const q = this.quality === 'draft' ? 'draft' : 'full';
+    // the half-density grid (no edge snap) while moving is only for the Fast detail setting: elsewhere it changed the
+    // carve's silhouette mid-move and disagreed with the shadow map, which is drawn from the full grid (shimmering shadows)
+    const q = this.quality === 'draft' && this.state.meshRes <= 512 ? 'draft' : 'full';
     this.board.geometry = this.topGrid[q];
     // vertices snap to the cut contours within about one grid step (draft frames use every other vertex)
     this.uniforms.uGridStep.value = q === 'draft' && this.topGrid.draft !== this.topGrid.full ? 0 : this.uniforms.uStep.value;   // draft frames (while dragging) skip the edge snap
@@ -901,11 +916,13 @@ export class Viewer {
   adapt(gap) {
     const g = this.frameGaps; g.push(gap); if (g.length < 8) return;
     const avg = g.reduce((a, b) => a + b, 0) / g.length; g.length = 0;
-    const cap = Math.min(window.devicePixelRatio || 1, 1);
+    // gentle and sticky: only clearly slow frames (< ~25 fps) step it down, never below 60% of full, and it climbs back in
+    // small steps, so a capable GPU never changes resolution mid-move
+    const cap = this.fullPR, floor = Math.max(0.6 * this.fullPR, 0.75);
     let pr = this.draftPR;
-    if (avg > 30 && pr > 0.5) pr = Math.max(0.5, pr * 0.8);
-    else if (avg < 18 && pr < cap) pr = Math.min(cap, pr * 1.15);
-    if (pr !== this.draftPR) { this.draftPR = pr; this.renderer.setPixelRatio(pr); this.resize(); }
+    if (avg > 40 && pr > floor) pr = Math.max(floor, pr * 0.85);
+    else if (avg < 20 && pr < cap) pr = Math.min(cap, pr * 1.1);
+    if (Math.abs(pr - this.draftPR) > 1e-3) { this.draftPR = pr; this.renderer.setPixelRatio(pr); this.resize(); }
   }
   requestRender(full = false) { if (full) this.setQuality('full'); this.dirty = true; }
   // the shaders work in board millimetres; with the turntable the board frame turns about world y, so the camera position,
