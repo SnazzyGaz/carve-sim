@@ -189,3 +189,4 @@ button:focus-visible,select:focus-visible,input:focus-visible,.drop:focus-within
 /* Desktop app (Tauri): WebKitGTK draws native selects with a light GTK theme, so draw our own arrow instead. */
 .desktop{color-scheme:dark}
 .desktop select{-webkit-appearance:none;appearance:none;padding-right:22px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a39d96' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 7px center;background-size:9px 6px}
+.swaybtn:disabled{opacity:.4;cursor:default}

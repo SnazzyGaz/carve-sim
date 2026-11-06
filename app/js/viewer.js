@@ -77,7 +77,7 @@ export class Viewer {
     r.shadowMap.autoUpdate = false; this.shadowDirty = true;
     container.appendChild(r.domElement);
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(28, 1, 2, 6000);
+    this.camera = new THREE.PerspectiveCamera(28, 1, 8, 6000);   // near 8 mm: depth precision for the stacked floor layers
     this.controls = new OrbitControls(this.camera, r.domElement);
     // camera like Relief Forge 2.0.7's viewer: OrbitControls about a fixed world up (y), so there is no roll and the horizon
     // stays level; damping 0.12, screen-space panning; the polar angle is clamped so the camera never dips under the floor.
@@ -118,7 +118,7 @@ export class Viewer {
     const loop = (now) => {
       const animating = this.stepAnim(now);
       let moved = this.controls.update() || animating;
-      if (this.state.sway && this.group.visible) {
+      if (this.state.sway && this.group.visible && this.state.pose === 'flat') {
         // Forge's Sway: the board turns slowly to and fro about the vertical axis; camera, lights and floor stay put
         this.spin.rotation.y = Math.sin((now - t0) / 2600) * 0.38; this.shadowDirty = true; moved = true;
         if (this.quality !== 'draft') this.setQuality('draft');   // a moving board: draft grid + adaptive pixel ratio
@@ -168,7 +168,8 @@ export class Viewer {
 
   material(part) {
     if (this.mats[part]) return this.mats[part];
-    const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.3, envMapIntensity: 1 });
+    // fog: false: the distance fog only fades the floor into the horizon; the board keeps its colour when zoomed out
+    const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.3, envMapIntensity: 1, fog: false });
     m.onBeforeCompile = (sh) => {
       this.injectVertex(sh, part);
       let f = sh.fragmentShader;
@@ -354,15 +355,18 @@ export class Viewer {
     const poolTex = new THREE.Texture(pool); poolTex.needsUpdate = true; poolTex.colorSpace = THREE.SRGBColorSpace;
     this.floorMat = new THREE.MeshBasicMaterial({ color: 0x2b2927, map: poolTex, fog: true });
     this.floor = new THREE.Mesh(g, this.floorMat);
-    this.floor.rotation.x = -Math.PI / 2; this.floor.renderOrder = -2;
+    this.floor.rotation.x = -Math.PI / 2; this.floor.position.y = -0.5; this.floor.renderOrder = -2;
+    Object.assign(this.floorMat, { polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 4 });
     poolTex.repeat.set(1, 1); poolTex.offset.set(0, 0);
     this.floorShadow = new THREE.Mesh(g, new THREE.ShadowMaterial({ opacity: 0.5 }));
-    this.floorShadow.rotation.x = -Math.PI / 2; this.floorShadow.position.y = 0.05; this.floorShadow.receiveShadow = true; this.floorShadow.renderOrder = -1;
+    this.floorShadow.rotation.x = -Math.PI / 2; this.floorShadow.position.y = -0.5; this.floorShadow.receiveShadow = true; this.floorShadow.renderOrder = -1;
+    Object.assign(this.floorShadow.material, { polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2, depthWrite: false });
     const cs = document.createElement('canvas'); cs.width = cs.height = 256;
     const c2 = cs.getContext('2d'); c2.filter = 'blur(14px)'; c2.fillStyle = '#000'; c2.fillRect(40, 40, 176, 176);
     const csTex = new THREE.Texture(cs); csTex.needsUpdate = true;
     this.contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: csTex, transparent: true, opacity: 0.55, depthWrite: false }));
-    this.contact.rotation.x = -Math.PI / 2; this.contact.position.y = 0.1; this.contact.renderOrder = -1;
+    this.contact.rotation.x = -Math.PI / 2; this.contact.position.y = 0; this.contact.renderOrder = 0;
+    Object.assign(this.contact.material, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     this.scene.add(this.floor, this.floorShadow, this.contact);
   }
   // Backdrop "Table": an oiled oak plank tabletop under the board (built the first time it is picked). Drawn once into a
@@ -404,7 +408,8 @@ export class Viewer {
     const tex = new THREE.Texture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true;
     tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
     const m = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: tex, roughness: T.rough, metalness: 0, envMapIntensity: 0.8 }));
-    m.rotation.x = -Math.PI / 2; m.position.y = 0.02; m.receiveShadow = true; m.renderOrder = -1;
+    m.rotation.x = -Math.PI / 2; m.position.y = 0; m.receiveShadow = true; m.renderOrder = -1;
+    Object.assign(m.material, { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     m.visible = false; this.scene.add(m);
     return m;
   }
@@ -540,21 +545,21 @@ export class Viewer {
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state, hm = D.artH / 2 + S.margin, T = S.thickness;
     const sp = this.spin, P = S.pose;
     if (!this.wall) {
-      this.wallMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f2, roughness: 0.92, metalness: 0, envMapIntensity: 0.6 });
+      this.wallMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f2, roughness: 0.92, metalness: 0, envMapIntensity: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       this.wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 4000), this.wallMat); this.wall.receiveShadow = true; this.scene.add(this.wall);
     }
     if (P === 'wall') {
       // hung: face forward (+z), board back on the wall at z = 0, centred at eye height
-      sp.rotation.x = Math.PI / 2; sp.position.set(0, 0, -T);   // the face at z = 0; it stands 10 mm off the wall on its hanger
+      sp.rotation.x = Math.PI / 2; sp.position.set(0, 0, -T);   // the face at z = 0, the back flat on the wall
       this.groundY = -hm - 700; this.boardC = new THREE.Vector3(0, 0, 0);   // the face centre
-      this.wall.position.set(0, 0, -T - 10);
+      this.wall.position.set(0, 0, -T);
     } else if (P === 'lean') {
       // leaning back ~15 degrees: the back bottom edge on the table, the top back edge against the wall
       const th = Math.PI / 2 - 0.26, c = Math.cos(th), sn = Math.sin(th);
       sp.rotation.x = th; sp.position.set(0, hm * sn, -T * c * 0.5);
       this.groundY = 0;
       this.boardC = new THREE.Vector3(0, hm * sn + T * c, -T * c * 0.5 + T * sn);   // the face centre
-      this.wall.position.set(0, 0, -T * c * 0.5 - hm * c - 0.6);
+      this.wall.position.set(0, 0, -T * c * 0.5 - hm * c);
     } else {
       sp.rotation.x = 0; sp.position.set(0, 0, 0); this.groundY = 0; this.boardC = new THREE.Vector3(0, T, 0);
     }
@@ -563,7 +568,11 @@ export class Viewer {
     this.floor.visible = onTable; if (this.floorShadow) this.floorShadow.visible = onTable && !SURFACE[S.backdrop];
     for (const [k, m] of Object.entries(this.surfaces || {})) m.visible = onTable && SURFACE[S.backdrop] === k;
     this.contact.visible = P === 'flat';
-    this.controls.maxPolarAngle = P === 'flat' ? Math.PI * 0.47 : Math.PI * 0.72;
+    const C = this.controls;
+    C.maxPolarAngle = P === 'wall' ? Math.PI * 0.64 : Math.PI * (P === 'lean' ? 0.46 : 0.47);
+    C.minAzimuthAngle = P === 'flat' ? -Infinity : -1.3; C.maxAzimuthAngle = P === 'flat' ? Infinity : 1.3;
+    this.wallZ = P === 'flat' ? null : this.wall.position.z;
+    if (P !== 'flat' && S.sway) this.setSway(false);
     this.spin.updateMatrixWorld(true); this.shadowDirty = true; this.dirty = true;
   }
   applyGrids() {
@@ -691,7 +700,7 @@ export class Viewer {
     this.floorShadow.visible = !table && S.pose !== 'wall';   // the tabletop takes the key's shadow itself
     if (this.wallMat) this.wallMat.color.set(0xf6f5f2);   // a white wall whatever the backdrop
     const bg = dark ? 0x141312 : 0xd9d6d0;
-    if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 900, 2600); }
+    if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 1400, 3600); }
     this.scene.background.set(bg); this.scene.fog.color.set(bg);
     this.floorMat.color.set(dark ? 0x2e2b28 : 0xd8d4cd);
     this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = table ? 0.5 : dark ? 0.6 : 0.42;
@@ -778,7 +787,16 @@ export class Viewer {
   // keep the orbit centre over the board (plus a little margin), so a right-drag pan can't lose it; the camera moves
   // with the centre so the view angle is unchanged
   clampTarget() {
-    if (this.state.pose && this.state.pose !== 'flat') return;
+    if (this.state.pose && this.state.pose !== 'flat') {   // keep the orbit centre on the board, in front of the wall
+      const D = this.depth || { artW: 300, artH: 300 }, S = this.state, t = this.controls.target, B = this.boardC;
+      const hx = D.artW / 2 + S.margin, hy = D.artH / 2 + S.margin;
+      const c = new THREE.Vector3(Math.min(hx, Math.max(-hx, t.x)), Math.min(B.y + hy, Math.max(Math.max(B.y - hy, S.pose === 'lean' ? 5 : -1e9), t.y)),
+        Math.min(B.z + 150, Math.max(this.wallZ + 5, t.z)));
+      if (!c.equals(t)) { const d = c.clone().sub(t); t.copy(c); this.camera.position.add(d); }
+      // and the camera itself in front of the wall
+      if (this.camera.position.z < this.wallZ + 20) this.camera.position.z = this.wallZ + 20;
+      return;
+    }
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state, t = this.controls.target;
     const hx = D.artW / 2 + S.margin + 10, hz = D.artH / 2 + S.margin + 10, R = Math.max(D.artW, D.artH);
     const cx = Math.min(hx, Math.max(-hx, t.x)), cz = Math.min(hz, Math.max(-hz, t.z)), cy = Math.min(S.thickness + R * 0.3, Math.max(0, t.y));
