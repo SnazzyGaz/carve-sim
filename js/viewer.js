@@ -4,6 +4,13 @@ import { COMMON, PARS, VERT_MAIN, BAKE_VERT, BAKE_FRAG } from './shader.js';
 import { SPECIES, FINISHES, FILLS, PAINTS, LIGHTS, customFill } from './materials.js';
 
 const lin = (hex) => new THREE.Color(hex); // ColorManagement: hex is sRGB -> stored linear
+// surfaces the board can stand on (oak tabletop, butcher-block floor): plank width and length range (mm), sRGB base, per-plank tone spread, grain lines per 140 mm, grain
+// strength, knots per plank, roughness
+const TABLES = {
+  oak:      { plank: 140, len: [900, 1900], rgb: [128, 96, 66], vary: 0.24, grain: 70, gs: 1.0, knots: 0.25, rough: 0.62 },
+  butcher:  { plank: 40, len: [400, 1200], rgb: [196, 150, 104], vary: 0.3, grain: 30, gs: 0.8, knots: 0.03, rough: 0.55 },
+};
+const SURFACE = { table: 'oak', floor: 'butcher' };   // backdrop -> surface the board stands on
 const SETTLE_MS = 160;
 // studio environment panels: [width, height, sRGB colour, radiance multiplier]; upward irradiance per unit env
 // intensity is about ENV.irr (key ~0.55, front ~0.35, the rest ~0.1); the resin floor model uses it
@@ -89,7 +96,7 @@ export class Viewer {
     this.fill = new THREE.DirectionalLight(0xc8d8ff, 0.25); this.scene.add(this.fill);
     this.keyDirW = new THREE.Vector3(0, 1, 0);
     this.state = { species: 'maple', insert: 'walnut', finish: 'oil', fill: 'none', fillPreset: 'black', paint: 'black', paintColor: '#2a4a7a', customColor: '#b5452c', customType: 0, sanded: true, fillLevel: 0, flood: false, menisc: 0.3,
-                   light: 'studio', az: 220, el: 42, exposure: 1.0, bright: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
+                   light: 'studio', az: 220, el: 42, exposure: 1.0, bright: 1.0, env: 0.5, key: 2.0, warm: 0.2, fillLight: 0.25, shadows: true, ao: 0.25, backdrop: 'dark', pose: 'flat', sway: false, meshRes: 1024, margin: 18, thickness: 22 };
     this.uniforms = this.makeUniforms();
     this.makeBackdrop();
     this.mats = {}; this.depthMats = {}; this.grids = new Map();
@@ -144,7 +151,7 @@ export class Viewer {
       uFillAbsorb: { value: new THREE.Vector3(1, 1, 1) }, uFillScatter: { value: new THREE.Color() },
       uBakeA: { value: null }, uBakeB: { value: null }, uBakeRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uAO: { value: blankAO }, uAOs: { value: 0.6 }, uPlugRot: { value: 1.35 }, uFillF0: { value: new THREE.Color() },
-      uFillVein: { value: 0 }, uFillVeinCol: { value: new THREE.Color() }, uKeyShare: { value: 0.6 }, uGlueCol: { value: new THREE.Color('#3a2a1c') },
+      uFillVein: { value: 0 }, uFillVeinCol: { value: new THREE.Color() }, uKeyShare: { value: 0.6 },
       uFillRough: { value: 0.1 }, uCharScale: { value: 1.25 }, uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uOrigin: { value: new THREE.Vector3() }, uCamBoard: { value: new THREE.Vector3() }, uBoardRot: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) },
     };
     return u;
@@ -358,6 +365,49 @@ export class Viewer {
     this.contact.rotation.x = -Math.PI / 2; this.contact.position.y = 0.1; this.contact.renderOrder = -1;
     this.scene.add(this.floor, this.floorShadow, this.contact);
   }
+  // Backdrop "Table": an oiled oak plank tabletop under the board (built the first time it is picked). Drawn once into a
+  // canvas: planks 140 mm wide with staggered end joints, per-plank tone, wandering grain lines and the odd knot. Lit
+  // like the board (key, environment, shadow map), so it grounds the board in a real setting.
+  makeTable(style = 'oak') {
+    const T = TABLES[style] || TABLES.oak;
+    const W = 2400, H = 1600, ppm = 1.2, cw = Math.round(W * ppm), ch = Math.round(H * ppm);
+    const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+    const g = cv.getContext('2d');
+    let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const pw = T.plank * ppm, base = T.rgb;
+    for (let y = 0, row = 0; y < ch; y += pw, row++) {
+      let x = -rnd() * 900 * ppm;
+      while (x < cw) {
+        const len = (T.len[0] + rnd() * (T.len[1] - T.len[0])) * ppm, t = 1 - T.vary / 2 + rnd() * T.vary, hue = rnd() * 10 - 5;
+        const c = base.map((v, i) => Math.round(v * t + (i === 0 ? hue : i === 2 ? -hue : 0)));
+        g.fillStyle = `rgb(${c})`; g.fillRect(x, y, len, pw);
+        g.save(); g.beginPath(); g.rect(x, y, len, pw); g.clip();
+        for (let k = 0; k < T.grain * pw / (140 * ppm); k++) {   // grain: long, gently wandering lines, darker or lighter than the plank
+          const yy = y + rnd() * pw, a = (0.03 + rnd() * 0.09) * T.gs, dk = rnd() < 0.7;
+          g.strokeStyle = dk ? `rgba(40,24,12,${a})` : `rgba(255,230,190,${a * 0.7})`; g.lineWidth = 0.6 + rnd() * 2.2;
+          g.beginPath(); g.moveTo(x, yy);
+          const amp = 2 + rnd() * 7, f = 0.002 + rnd() * 0.004, ph = rnd() * 6;
+          for (let xx = x; xx <= x + len; xx += 24) g.lineTo(xx, yy + amp * Math.sin(xx * f + ph) + amp * 0.4 * Math.sin(xx * f * 3.1 + ph));
+          g.stroke();
+        }
+        if (rnd() < T.knots) {             // a small knot
+          const kx = x + rnd() * len, ky = y + pw * (0.25 + rnd() * 0.5), r = 5 + rnd() * 9;
+          const gr = g.createRadialGradient(kx, ky, 0, kx, ky, r * 2.2); gr.addColorStop(0, 'rgba(45,26,12,0.85)'); gr.addColorStop(0.4, 'rgba(60,36,18,0.4)'); gr.addColorStop(1, 'rgba(60,36,18,0)');
+          g.fillStyle = gr; g.beginPath(); g.ellipse(kx, ky, r * 3, r * 1.6, 0, 0, Math.PI * 2); g.fill();
+        }
+        g.restore();
+        g.fillStyle = 'rgba(30,18,10,0.75)'; g.fillRect(x + len - 1, y, 1.5, pw);   // end joint
+        x += len;
+      }
+      g.fillStyle = 'rgba(25,15,8,0.8)'; g.fillRect(0, y + pw - 1, cw, 2);         // long seam between planks
+    }
+    const tex = new THREE.Texture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true;
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: tex, roughness: T.rough, metalness: 0, envMapIntensity: 0.8 }));
+    m.rotation.x = -Math.PI / 2; m.position.y = 0.02; m.receiveShadow = true; m.renderOrder = -1;
+    m.visible = false; this.scene.add(m);
+    return m;
+  }
   // the light pool and the contact shadow follow the board's size
   placeFloor(w, h) {
     const t = this.floorMat.map, span = 6000, R = Math.max(w, h) * 2.6;
@@ -368,7 +418,7 @@ export class Viewer {
 
   makeBoard() {
     this.group = new THREE.Group(); this.group.visible = false;
-    this.spin = new THREE.Group(); this.spin.add(this.group); this.scene.add(this.spin);   // turntable pivot at the board centre
+    this.spin = new THREE.Group(); this.spin.rotation.order = 'YXZ'; this.spin.add(this.group); this.scene.add(this.spin);   // turntable pivot at the board centre; x = display tilt
     const mk = (part) => {
       const o = new THREE.Mesh(new THREE.BufferGeometry(), this.material(part));
       o.customDepthMaterial = this.depthMaterial(part);
@@ -479,6 +529,42 @@ export class Viewer {
     this.uniforms.uStep.value = step;
     this.uniforms.uFlat.value = flushFill;
     this.applyGrids();
+    this.applyPose();
+  }
+  // ------------------------------------------------------------ display pose
+  // flat on the table (default), leaning back against a wall on the table, or hung on a wall. The board itself never
+  // changes: the turntable pivot (spin) tilts it, and the light, shadow camera, studio reflections and the shader's board
+  // frame (uBoardRot / uKeyDir) all follow that tilt, so the board is lit the same way relative to its own face.
+  setPose(pose) { this.state.pose = pose; this.applyPose(); this.placeLight(); this.setLighting({}); if (this.depth) this.setView('angle'); }
+  applyPose() {
+    const D = this.depth || { artW: 300, artH: 300 }, S = this.state, hm = D.artH / 2 + S.margin, T = S.thickness;
+    const sp = this.spin, P = S.pose;
+    if (!this.wall) {
+      this.wallMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f2, roughness: 0.92, metalness: 0, envMapIntensity: 0.6 });
+      this.wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 4000), this.wallMat); this.wall.receiveShadow = true; this.scene.add(this.wall);
+    }
+    if (P === 'wall') {
+      // hung: face forward (+z), board back on the wall at z = 0, centred at eye height
+      sp.rotation.x = Math.PI / 2; sp.position.set(0, 0, -T);   // the face at z = 0; it stands 10 mm off the wall on its hanger
+      this.groundY = -hm - 700; this.boardC = new THREE.Vector3(0, 0, 0);   // the face centre
+      this.wall.position.set(0, 0, -T - 10);
+    } else if (P === 'lean') {
+      // leaning back ~15 degrees: the back bottom edge on the table, the top back edge against the wall
+      const th = Math.PI / 2 - 0.26, c = Math.cos(th), sn = Math.sin(th);
+      sp.rotation.x = th; sp.position.set(0, hm * sn, -T * c * 0.5);
+      this.groundY = 0;
+      this.boardC = new THREE.Vector3(0, hm * sn + T * c, -T * c * 0.5 + T * sn);   // the face centre
+      this.wall.position.set(0, 0, -T * c * 0.5 - hm * c - 0.6);
+    } else {
+      sp.rotation.x = 0; sp.position.set(0, 0, 0); this.groundY = 0; this.boardC = new THREE.Vector3(0, T, 0);
+    }
+    this.wall.visible = P !== 'flat';
+    const onTable = P !== 'wall';
+    this.floor.visible = onTable; if (this.floorShadow) this.floorShadow.visible = onTable && !SURFACE[S.backdrop];
+    for (const [k, m] of Object.entries(this.surfaces || {})) m.visible = onTable && SURFACE[S.backdrop] === k;
+    this.contact.visible = P === 'flat';
+    this.controls.maxPolarAngle = P === 'flat' ? Math.PI * 0.47 : Math.PI * 0.72;
+    this.spin.updateMatrixWorld(true); this.shadowDirty = true; this.dirty = true;
   }
   applyGrids() {
     const q = this.quality === 'draft' ? 'draft' : 'full';
@@ -597,12 +683,18 @@ export class Viewer {
     if (this.key.castShadow !== (S.shadows !== false)) { this.key.castShadow = S.shadows !== false; this.shadowDirty = true; }
     this.scene.environmentIntensity = S.env;
     this.uniforms.uAOs.value = S.ao ?? 0.25;
-    const dark = S.backdrop === 'dark';
+    // Table = an oak tabletop, Floor = butcher-block boards (both built the first time they are picked)
+    const surf = SURFACE[S.backdrop], table = !!surf, dark = S.backdrop !== 'light';
+    this.surfaces = this.surfaces || {};
+    if (surf && !this.surfaces[surf]) this.surfaces[surf] = this.makeTable(surf);
+    for (const [k, m] of Object.entries(this.surfaces)) m.visible = k === surf && S.pose !== 'wall';
+    this.floorShadow.visible = !table && S.pose !== 'wall';   // the tabletop takes the key's shadow itself
+    if (this.wallMat) this.wallMat.color.set(0xf6f5f2);   // a white wall whatever the backdrop
     const bg = dark ? 0x141312 : 0xd9d6d0;
     if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 900, 2600); }
     this.scene.background.set(bg); this.scene.fog.color.set(bg);
     this.floorMat.color.set(dark ? 0x2e2b28 : 0xd8d4cd);
-    this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = dark ? 0.6 : 0.42;
+    this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = table ? 0.5 : dark ? 0.6 : 0.42;
     // only a light that moved needs a new shadow map / environment; brightness, ambient, AO and exposure are uniforms
     const at = S.az + ',' + S.el;
     if (at !== this._lightAt) { this._lightAt = at; this.placeLight(); }
@@ -613,14 +705,16 @@ export class Viewer {
     const S = this.state, D = this.depth;
     const az = THREE.MathUtils.degToRad(S.az), el = THREE.MathUtils.degToRad(S.el);
     const dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+    if (this.spin && S.pose && S.pose !== 'flat') dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), this.spin.rotation.x);
     const R = D ? Math.hypot(D.artW, D.artH) / 2 + S.margin + 10 : 260;
-    this.key.position.copy(dir.clone().multiplyScalar(R * 3)).add(new THREE.Vector3(0, S.thickness, 0));
-    this.key.target.position.set(0, S.thickness, 0);
+    const C = this.boardC || new THREE.Vector3(0, S.thickness, 0);
+    this.key.position.copy(dir.clone().multiplyScalar(R * 3)).add(C);
+    this.key.target.position.copy(C);
     const c = this.key.shadow.camera; c.left = -R; c.right = R; c.top = R; c.bottom = -R; c.near = R * 1.5; c.far = R * 4.5;
     c.updateProjectionMatrix();
     this.keyDirW.copy(dir); this.syncBoardFrame();
     // Forge places the fill opposite the key, at half the key's distance in height
-    this.fill.position.set(-dir.x * R * 3, R * 1.5 + S.thickness, -dir.z * R * 3);
+    this.fill.position.set(C.x - dir.x * R * 3, C.y + (S.pose === 'flat' ? R * 1.5 : R * 0.8), C.z - dir.z * R * 3 + (S.pose === 'flat' ? 0 : R * 2));
     this.fill.target = this.key.target;
     // share of the board top's irradiance that the key provides (the resin floor model needs it); the studio
     // environment gives roughly 4 units of irradiance per unit of intensity to an upward face (soft box ~2.9, front fill ~1, room)
@@ -659,7 +753,7 @@ export class Viewer {
     }
   }
   buildEnv(force = false) {
-    const S = this.state, key = S.az.toFixed(1) + ',' + S.el.toFixed(1);
+    const S = this.state, key = S.az.toFixed(1) + ',' + S.el.toFixed(1) + ',' + S.pose;
     if (key === this.envAt) return;
     if (this.envRT && !force && this.quality === 'draft') { this.envPending = true; return; }
     this.envAt = key; this.envPending = false;
@@ -667,6 +761,7 @@ export class Viewer {
     const put = (m, a, e, d) => { m.position.set(Math.cos(e) * Math.sin(a) * d, Math.sin(e) * d, Math.cos(e) * Math.cos(a) * d); m.lookAt(0, 0, 0); };
     put(this.envKey, az, Math.max(el, 0.45), 44); put(this.envStrip, az + Math.PI * 0.85, 0.35, 44); put(this.envFront, az + Math.PI, 1.0, 44);
     put(this.envWin, az - Math.PI * 0.55, 0.42, 47);
+    if (S.pose !== 'flat') for (const m of [this.envKey, this.envStrip, this.envFront, this.envWin]) { m.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), this.spin.rotation.x); m.lookAt(0, 0, 0); }
     const rt = this.pmrem.fromScene(this.envScene, 0.02);
     this.scene.environment = rt.texture; if (this.envRT) this.envRT.dispose(); this.envRT = rt;
     this.dirty = true;
@@ -683,6 +778,7 @@ export class Viewer {
   // keep the orbit centre over the board (plus a little margin), so a right-drag pan can't lose it; the camera moves
   // with the centre so the view angle is unchanged
   clampTarget() {
+    if (this.state.pose && this.state.pose !== 'flat') return;
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state, t = this.controls.target;
     const hx = D.artW / 2 + S.margin + 10, hz = D.artH / 2 + S.margin + 10, R = Math.max(D.artW, D.artH);
     const cx = Math.min(hx, Math.max(-hx, t.x)), cz = Math.min(hz, Math.max(-hz, t.z)), cy = Math.min(S.thickness + R * 0.3, Math.max(0, t.y));
@@ -696,18 +792,21 @@ export class Viewer {
     if (!this.state.sway && this.spin.rotation.y) { this.spin.rotation.y = 0; this.shadowDirty = true; }   // as Forge's fit()
     const D = this.depth || { artW: 300, artH: 300 }, S = this.state, cam = this.camera;
     const fit = this.fitDist();
-    const t = name === 'close' ? this.controls.target.clone() : new THREE.Vector3(0, S.thickness, 0);
+    const t = name === 'close' ? this.controls.target.clone() : (this.boardC || new THREE.Vector3(0, S.thickness, 0)).clone();
     if (name === 'fit') name = 'angle';
     let pos;
     const put = (pol, az, dist) => {
       pol = THREE.MathUtils.degToRad(pol); az = THREE.MathUtils.degToRad(az);
-      pos = new THREE.Vector3(t.x + dist * Math.sin(pol) * Math.sin(az), t.y + dist * Math.cos(pol), t.z + dist * Math.sin(pol) * Math.cos(az));
+      if (S.pose !== 'flat') az = Math.PI - az;   // tilted board: view from above its bottom edge, not from below
+      const o = new THREE.Vector3(dist * Math.sin(pol) * Math.sin(az), dist * Math.cos(pol), dist * Math.sin(pol) * Math.cos(az));
+      if (S.pose !== 'flat') o.applyAxisAngle(new THREE.Vector3(1, 0, 0), this.spin.rotation.x);
+      pos = t.clone().add(o);
     };
     if (name === 'top') put(0.01, 0, fit * 1.02);
-    else if (name === 'angle') put(38, 18, fit * 1.18);
+    else if (name === 'angle') { if (S.pose === 'flat') put(38, 18, fit * 1.18); else put(S.pose === 'wall' ? 24 : 30, 26, fit * 1.75); }
     else if (name === 'low') put(66, 30, fit * 1.25);
     else if (name === 'close') put(42, 22, fit * 0.28);
-    else if (name === 'corner') { t.set(D.artW * 0.32, S.thickness, D.artH * 0.38); put(62, 40, fit * 0.6); }
+    else if (name === 'corner') { if (S.pose === 'flat') t.set(D.artW * 0.32, S.thickness, D.artH * 0.38); put(62, 40, fit * 0.6); }
     else return;
     this.updateLimits();
     if (this.onView) this.onView(name);
@@ -745,6 +844,7 @@ export class Viewer {
     this.spin.updateMatrixWorld(true); this.controls.target.copy(this.group.localToWorld(new THREE.Vector3(u, 0, v))); this.setView('close', true);
   }
   focusAt(e) {
+    if (this.state.pose !== 'flat') { if (this.depth) this.setView('fit'); return; }
     const r = this.renderer.domElement.getBoundingClientRect();
     const p = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     const ray = new THREE.Raycaster(); ray.setFromCamera(p, this.camera);
@@ -795,8 +895,10 @@ export class Viewer {
   syncBoardFrame() {
     const U = this.uniforms; this.spin.updateMatrixWorld(true);
     U.uCamBoard.value.copy(this.camera.position); this.group.worldToLocal(U.uCamBoard.value);
-    const ry = this.spin.rotation.y, c = Math.cos(ry), sn = Math.sin(ry), m = U.uBoardRot.value; m[0] = c; m[2] = -sn; m[6] = sn; m[8] = c;   // column-major rotation about y
-    U.uKeyDir.value.copy(this.keyDirW).applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.spin.rotation.y);
+    // board frame -> world: the pivot's full rotation (display tilt, then the turntable), column-major
+    const q = this.spin.quaternion, m = U.uBoardRot.value;
+    [[1, 0, 0], [0, 1, 0], [0, 0, 1]].forEach((e, i) => { const v = new THREE.Vector3(...e).applyQuaternion(q); m[i * 3] = v.x; m[i * 3 + 1] = v.y; m[i * 3 + 2] = v.z; });
+    U.uKeyDir.value.copy(this.keyDirW).applyQuaternion(q.clone().invert());
   }
   render() {
     this.syncBoardFrame();
