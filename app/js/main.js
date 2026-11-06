@@ -130,6 +130,7 @@ function syncLightSliders() { for (const k of ['az', 'bright']) slider(k).set(vi
 $('#shadows').onchange = (e) => viewer.setLighting({ shadows: e.target.checked });
 $('#sway').onclick = () => { const on = !viewer.state.sway; viewer.setSway(on); $('#sway').classList.toggle('on', on); };
 seg('#backdrop', (v) => viewer.setLighting({ backdrop: v }));
+seg('#pose', (v) => viewer.setPose(v));
 seg('#meshRes', (v) => viewer.setMeshRes(+v));
 $$('#views button[data-view]').forEach((b) => b.onclick = () => viewer.setView(b.dataset.view));
 // the current preset is lit until the user orbits away
@@ -421,6 +422,7 @@ $('#btnPng').onclick = async () => {
 app.set = (o) => {
   if (o.material) { viewer.setMaterial(o.material); segSet('#fill', viewer.state.fill); fillUI(viewer.state.fill); woodSet('#species', viewer.state.species); woodSet('#inserts', viewer.state.insert); segSet('#finish', viewer.state.finish); segSet('#resins', viewer.state.fillPreset); customUI(); paintUI(); $('#sanded').checked = viewer.state.sanded; $('#flood').checked = !!viewer.state.flood; for (const k of ['fillLevel', 'menisc']) slider(k).set(viewer.state[k]); pourUI(); }
   if (o.light) { viewer.setLighting(o.light); syncLightSliders(); }
+  if (o.pose) { viewer.setPose(o.pose); segSet('#pose', o.pose); }
   if (o.view) viewer.setView(o.view, true);
   if (o.close) viewer.setCloseUp(o.close[0], o.close[1]);
 };
