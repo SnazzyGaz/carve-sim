@@ -16,7 +16,10 @@ export class Engine {
     this._ready = null; this.cvReady = false;
   }
   // OpenCV is not loaded with the page; this starts it (idempotent) and resolves once it is up
-  get ready() { return this._ready ??= this._call({ type: 'ping' }); }
+  get ready() {   // a failed load is forgotten, so warming up again (or the next trace) retries it
+    return this._ready ??= this._call({ type: 'ping' }).catch((e) => { this._ready = null; throw e; });
+  }
+  unload(id) { return this._call({ type: 'unload', id }).catch(() => {}); }   // free a traced image in the worker
   warm() { return this.ready; }
   _call(msg, transfer = []) {
     const rid = ++this.rid;

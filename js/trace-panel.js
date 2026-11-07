@@ -58,11 +58,12 @@ export function initTrace({ $, $$, seg, slider, setStatus, onSvg, dl }) {
     if (!img) return;
     const btn = $('#btnTrace'); btn.disabled = true; $('#btnSvg').disabled = true;
     const t0 = performance.now(); setStatus('busy', 'Tracing…'); note(engine.cvReady ? 'Tracing…' : 'Loading the tracer, then tracing…');
+    let srcId = null;
     try {
       const preset = PRESETS[$('#tPreset').value] || PRESETS.line;
       const params = { ...preset, mode, invert: $('#tInvert').checked, width_mm: slider('t_width').get(),
         vbit_angle: slider('t_vbit').get(), depth: mode === 'pocket' ? slider('t_pocket').get() : slider('t_depth').get() };
-      const info = await engine.load(img.blob, img.name);
+      const info = await engine.load(img.blob, img.name); srcId = info.id;
       const out = await engine.process(info.id, params, true);
       URL.revokeObjectURL(info.thumbUrl);
       if (!out || !out.svg) throw new Error('the tracer returned no SVG');
@@ -75,7 +76,7 @@ export function initTrace({ $, $$, seg, slider, setStatus, onSvg, dl }) {
       $('#btnSvg').disabled = false;
       await onSvg(svg, name);
     } catch (e) { console.error(e); note('Trace failed: ' + e.message); setStatus('err', 'Trace failed'); }
-    finally { btn.disabled = !img; }
+    finally { btn.disabled = !img; if (srcId) engine.unload(srcId); }
   }
   $('#btnTrace').onclick = trace;
   $('#btnSvg').onclick = () => {
