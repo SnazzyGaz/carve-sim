@@ -538,6 +538,32 @@ export class Viewer {
     this.applyGrids();
     this.applyPose();
   }
+  // ------------------------------------------------------------ scene around the board
+  // The one place that decides what surrounds the board, from two settings only: pose (flat / lean / wall) and backdrop
+  // (dark / light / table / floor). Everything here is derived, so any change to either just calls this again.
+  syncScene() {
+    const S = this.state, P = S.pose, surf = SURFACE[S.backdrop], dark = S.backdrop !== 'light';
+    // Table = an oak tabletop, Floor = butcher-block boards (each built the first time it is picked)
+    this.surfaces = this.surfaces || {};
+    if (surf && !this.surfaces[surf]) this.surfaces[surf] = this.makeTable(surf);
+    const standsOnSomething = P !== 'wall';
+    const show = {
+      floor: standsOnSomething,
+      floorShadow: standsOnSomething && !surf,   // a table / boards take the key's shadow themselves
+      contact: P === 'flat',
+      wall: P !== 'flat',
+      wallContact: P === 'wall',
+    };
+    for (const k in show) if (this[k]) this[k].visible = show[k];
+    for (const [k, m] of Object.entries(this.surfaces)) m.visible = standsOnSomething && k === surf;
+    const bg = dark ? 0x141312 : 0xd9d6d0;
+    if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 1400, 3600); }
+    this.scene.background.set(bg); this.scene.fog.color.set(bg);
+    this.floorMat.color.set(dark ? 0x2e2b28 : 0xd8d4cd);
+    this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = surf ? 0.5 : dark ? 0.6 : 0.42;
+    if (this.wallMat) this.wallMat.color.set(0xf6f5f2);   // a white wall whatever the backdrop
+    this.shadowDirty = true; this.dirty = true;
+  }
   // ------------------------------------------------------------ display pose
   // flat on the table (default), leaning back against a wall on the table, or hung on a wall. The board itself never
   // changes: the turntable pivot (spin) tilts it, and the light, shadow camera, studio reflections and the shader's board
@@ -573,11 +599,7 @@ export class Viewer {
     } else {
       sp.rotation.x = 0; sp.position.set(0, 0, 0); this.groundY = 0; this.boardC = new THREE.Vector3(0, T, 0);
     }
-    this.wall.visible = P !== 'flat'; this.wallContact.visible = P === 'wall';
-    const onTable = P !== 'wall';
-    this.floor.visible = onTable; if (this.floorShadow) this.floorShadow.visible = onTable && !SURFACE[S.backdrop];
-    for (const [k, m] of Object.entries(this.surfaces || {})) m.visible = onTable && SURFACE[S.backdrop] === k;
-    this.contact.visible = P === 'flat';
+    this.syncScene();
     const C = this.controls;
     // against a wall the camera stays in front of it: within 60 degrees of straight-on sideways, and for the hung board
     // within ~35 degrees above or below its centre (further round, the wall and board are seen edge-on and look pierced)
@@ -707,18 +729,7 @@ export class Viewer {
     if (this.key.castShadow !== (S.shadows !== false)) { this.key.castShadow = S.shadows !== false; this.shadowDirty = true; }
     this.scene.environmentIntensity = S.env;
     this.uniforms.uAOs.value = S.ao ?? 0.25;
-    // Table = an oak tabletop, Floor = butcher-block boards (both built the first time they are picked)
-    const surf = SURFACE[S.backdrop], table = !!surf, dark = S.backdrop !== 'light';
-    this.surfaces = this.surfaces || {};
-    if (surf && !this.surfaces[surf]) this.surfaces[surf] = this.makeTable(surf);
-    for (const [k, m] of Object.entries(this.surfaces)) m.visible = k === surf && S.pose !== 'wall';
-    this.floorShadow.visible = !table && S.pose !== 'wall';   // the tabletop takes the key's shadow itself
-    if (this.wallMat) this.wallMat.color.set(0xf6f5f2);   // a white wall whatever the backdrop
-    const bg = dark ? 0x141312 : 0xd9d6d0;
-    if (!this.scene.background) { this.scene.background = new THREE.Color(); this.scene.fog = new THREE.Fog(bg, 1400, 3600); }
-    this.scene.background.set(bg); this.scene.fog.color.set(bg);
-    this.floorMat.color.set(dark ? 0x2e2b28 : 0xd8d4cd);
-    this.floorShadow.material.opacity = dark ? 0.55 : 0.38; this.contact.material.opacity = table ? 0.5 : dark ? 0.6 : 0.42;
+    this.syncScene();
     // only a light that moved needs a new shadow map / environment; brightness, ambient, AO and exposure are uniforms
     const at = S.az + ',' + S.el;
     if (at !== this._lightAt) { this._lightAt = at; this.placeLight(); }

@@ -26,14 +26,22 @@ function loadCV() {
       try { return await WebAssembly.compileStreaming(new Response(a, { headers: { 'Content-Type': 'application/wasm' } })); }
       catch (e) { return WebAssembly.compile(await (await fetch(url)).arrayBuffer()); }
     })();
+    // OpenCV's start-up waits on CV_WASM_MODULE; if that download fails it just waits forever (the trace panel sat on
+    // "Loading the tracer" for good). Race it against the download's failure so a failed load ends as an error.
+    const failed = self.CV_WASM_MODULE.then(() => new Promise(() => {}));
     importScripts('../vendor/opencv.js');
-    let c = self.cv;
-    if (c && typeof c.then === 'function') c = await c;
-    else if (typeof c === 'function') c = await c();
-    else if (c && !c.Mat) await new Promise((r) => { c.onRuntimeInitialized = r; });
-    cv = c;
+    const init = (async () => {
+      let c = self.cv;
+      if (c && typeof c.then === 'function') c = await c;
+      else if (typeof c === 'function') c = await c();
+      else if (c && !c.Mat) await new Promise((r) => { c.onRuntimeInitialized = r; });
+      return c;
+    })();
+    cv = await Promise.race([init, failed]);
     self.postMessage({ type: 'cvready' });
   })();
+  // a failed download or compile is not kept: the next request tries again (it used to fail every trace until a reload)
+  cvLoading.catch(() => { cvLoading = null; });
   return cvLoading;
 }
 
@@ -522,6 +530,8 @@ async function process(src, params, doTrace) {
 self.onmessage = async (e) => {
   const m = e.data;
   try {
+    // the decoded image is not needed after its trace: free it (full-res RGBA, tens of MB for a photo); needs no OpenCV
+    if (m.type === 'unload') { sources.delete(m.id); self.postMessage({ rid: m.rid, ok: true }); return; }
     await loadCV();
     if (m.type === 'load') {
       const info = await loadSource(m);
